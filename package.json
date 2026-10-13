@@ -32,6 +32,14 @@
     "prepublishOnly": "pnpm run check"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cmosgh/atl-axi.git"
+  },
+  "homepage": "https://github.com/cmosgh/atl-axi#readme",
+  "bugs": {
+    "url": "https://github.com/cmosgh/atl-axi/issues"
+  },
   "engines": {
     "node": ">=20"
   },
