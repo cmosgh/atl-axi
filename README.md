@@ -49,7 +49,9 @@ Optional: `atl-axi setup hooks` shows your open issues (and the issue named in t
 
 ## Authenticate
 
-Create an [Atlassian API token](https://id.atlassian.com/manage-profile/security/api-tokens). Scoped tokens need:
+Create an [Atlassian API token with scopes](https://id.atlassian.com/manage-profile/security/api-tokens) for Jira:
+
+`read:jira-work` `write:jira-work` (plus `read:jira-user` for `--assignee <name>` and your display name, and `read:board-scope:jira-software` `read:sprint:jira-software` for `sprint list --board`)
 
 | Scope | For |
 | --- | --- |
@@ -63,9 +65,22 @@ pbpaste | atl-axi auth login --site acme.atlassian.net --email you@example.com -
 atl-axi auth status   # shows which scope families the token has
 ```
 
-- The token is read **only from stdin**, validated, then stored in the OS keychain. `atl-axi` never prompts.
-- Environment overrides for CI: `ATLASSIAN_EMAIL` + `ATLASSIAN_API_TOKEN`, with `ATLASSIAN_SITE` or `JIRA_CLOUD_ID`.
+- The token is read **only from stdin** - never from argv, so it cannot land in shell history or an agent transcript - validated against the API, then stored in the OS keychain (macOS Keychain, Windows Credential Manager, libsecret). `atl-axi` never prompts.
+- Use the **Atlassian account email**.
 - Requests always go through `api.atlassian.com/ex/jira/<cloudId>` (required for scoped tokens); the cloud id is looked up from the site.
+
+### Environment variables
+
+Override the stored login (CI, containers, agent shells):
+
+| Variable | Purpose |
+| --- | --- |
+| `ATLASSIAN_EMAIL` | Atlassian account email (with `ATLASSIAN_API_TOKEN`) |
+| `ATLASSIAN_API_TOKEN` | API token (with `ATLASSIAN_EMAIL`) |
+| `ATLASSIAN_SITE` | Site, e.g. `acme.atlassian.net`; the cloud id is looked up and cached |
+| `JIRA_CLOUD_ID` | Cloud id directly; skips the lookup and wins over `ATLASSIAN_SITE` |
+| `ATL_AXI_NO_KEYCHAIN` | `1` never reads or writes the OS keychain |
+| `ATL_AXI_CONFIG_DIR` | Config and cache directory (default `$XDG_CONFIG_HOME/atl-axi` or `~/.config/atl-axi`) |
 
 ## Commands
 
