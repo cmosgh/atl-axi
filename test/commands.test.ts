@@ -149,7 +149,7 @@ describe("issue edit", () => {
     ]);
     const { stdout } = await run("issue", "edit", "PROJ-1", "--assignee", "me");
     expect(calls.find((c) => c.path === `${ISSUE}/assignee`)!.body).toEqual({ accountId: ME.accountId });
-    expect(stdout).toContain("result: updated");
+    expect(stdout).toContain("assignee,Robin Reviewer");
   });
 });
 
@@ -192,7 +192,7 @@ describe("issue comment", () => {
     const { stdout } = await run("issue", "comment", "PROJ-1", "--body", "First line\nsecond line\n\n- a\n- b");
     const body = calls.find((c) => c.method === "POST")!.body as { body: { content: Array<{ type: string }> } };
     expect(body.body.content.map((n) => n.type)).toEqual(["paragraph", "bulletList"]);
-    expect(stdout).toContain("comment: \"101\"");
+    expect(stdout).toContain("comment: 101");
   });
 });
 

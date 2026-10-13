@@ -149,7 +149,7 @@ async function issueView(args: string[]): Promise<string> {
 
   const help: string[] = [];
   if (text.truncated) help.push(`Run \`atl-axi issue view ${key} --full\` for the whole description`);
-  if (commentTotal > 0) help.push(`Run \`atl-axi issue comments ${key}\` to read the ${commentTotal} comments`);
+  if (commentTotal > 0) help.push(`Run \`atl-axi issue comments ${key}\` to read ${commentTotal === 1 ? "the comment" : `the ${commentTotal} comments`}`);
   help.push(`Run \`atl-axi issue transition ${key}\` to list status transitions`);
 
   return out(block({ issue: summary }), description ? "---" : "", description ? text.text : "", description ? "---" : "", helpBlock(help));
@@ -203,7 +203,7 @@ async function issueComment(args: string[]): Promise<string> {
   if (dup) return block({ issue: key, result: `identical comment ${str(dup["id"])} already posted (no-op)` });
 
   const created = obj(await jiraJson(`${issuePath(key)}/comment`, { method: "POST", body: { body: textToAdf(text) } }));
-  return out(block({ issue: key, result: "commented", comment: str(created["id"]) }), helpBlock([`Run \`atl-axi issue comments ${key}\` to read the thread`]));
+  return out(block({ issue: key, result: "commented", comment: Number(created["id"]) || str(created["id"]) }), helpBlock([`Run \`atl-axi issue comments ${key}\` to read the thread`]));
 }
 
 // --- edit / create -------------------------------------------------------------
@@ -391,7 +391,10 @@ async function issueEdit(args: string[]): Promise<string> {
   if (assigneeChanges) await jiraJson(`${issuePath(key)}/assignee`, { method: "PUT", body: { accountId: assignee } });
 
   const rows: Array<{ field: string; value: string | number }> = changes.map((c) => ({ field: c.field.name, value: c.shown }));
-  if (assigneeChanges) rows.push({ field: "assignee", value: assignee ?? "none" });
+  if (assigneeChanges) {
+    const label = assigneeRaw!.trim().toLowerCase() === "me" ? ((await currentUser())?.displayName ?? "me") : assigneeRaw!.trim();
+    rows.push({ field: "assignee", value: assignee === null ? "none" : label });
+  }
   return out(
     block({ issue: key, result: "updated", changed: rows, ...(unchanged.length > 0 ? { unchanged: unchanged.join("; ") } : {}) }),
     helpBlock([`Run \`atl-axi issue view ${key}\` to confirm`]),
