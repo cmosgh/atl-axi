@@ -1,6 +1,6 @@
 {
   "name": "atl-axi",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "AXI-compliant Atlassian Jira Cloud CLI for agents - issues, JQL search, field edits (story points, sprint, parent), transitions, comments, links - with token-efficient TOON output",
   "type": "module",
   "keywords": [
