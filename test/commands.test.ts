@@ -76,6 +76,25 @@ describe("search", () => {
   });
 });
 
+describe("project view", () => {
+  it("lists issue types by hierarchy with their statuses", async () => {
+    mockApi([
+      { path: "/rest/api/3/project/PROJ", json: { key: "PROJ", name: "Widgets", style: "classic", lead: { displayName: "Ana Author" }, issueTypes: [{ id: "1", hierarchyLevel: 1 }, { id: "2", hierarchyLevel: 0 }, { id: "3", hierarchyLevel: -1 }] } },
+      {
+        path: "/rest/api/3/project/PROJ/statuses",
+        json: [
+          { id: "3", name: "Sub-task", subtask: true, statuses: [{ name: "To Do" }, { name: "Done" }] },
+          { id: "2", name: "Task", subtask: false, statuses: [{ name: "To Do" }, { name: "In Progress" }, { name: "Done" }] },
+          { id: "1", name: "Epic", subtask: false, statuses: [{ name: "Open" }] },
+        ],
+      },
+    ]);
+    const { stdout } = await run("project", "view", "proj");
+    expect(stdout).toContain("style: company-managed");
+    expect(stdout).toContain("types[3]{type,level,statuses}:\n  Epic,1,Open\n  Task,0,To Do; In Progress; Done\n  Sub-task,-1,To Do; Done");
+  });
+});
+
 describe("issue fields", () => {
   it("lists the issue's non-empty fields by name, and --editable lists the edit screen", async () => {
     mockApi([
