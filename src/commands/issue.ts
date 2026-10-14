@@ -21,10 +21,12 @@ import { readAdf, readText } from "../text-input.js";
 import { linkCommand, linkRows } from "./link.js";
 
 export const ISSUE_HELP = `usage: atl-axi issue <subcommand> [args] [flags]
-subcommands[8]:
-  view <KEY>, comments <KEY>, comment <KEY>, create, edit <KEY>, transition <KEY> [<status-or-transition>], link <KEY> <relation> <KEY>, unlink <KEY> <relation> <KEY>
+subcommands[9]:
+  view <KEY>, fields <KEY>, comments <KEY>, comment <KEY>, create, edit <KEY>, transition <KEY> [<status-or-transition>], link <KEY> <relation> <KEY>, unlink <KEY> <relation> <KEY>
 flags{view}:
   --full (whole description), --fields <name-or-id,...> (extra fields by name, e.g. 'Fix versions,customfield_10050')
+flags{fields}:
+  --editable (fields on the edit screen, empty ones included), --search <text> (filter by name or id)
 flags{comments}:
   --limit <1-100> (default 10, newest last), --full
 flags{comment}:
@@ -48,7 +50,7 @@ examples[6]:
   atl-axi issue create --project PROJ --type Task --summary "Retry the sync worker"
 `;
 
-const SUBCOMMANDS = ["view", "comments", "comment", "create", "edit", "transition", "link", "unlink"] as const;
+const SUBCOMMANDS = ["view", "fields", "comments", "comment", "create", "edit", "transition", "link", "unlink"] as const;
 const DESCRIPTION_LIMIT = 2_000;
 const COMMENT_LIMIT = 1_500;
 const BASE_FIELDS = ["summary", "status", "issuetype", "priority", "assignee", "parent", "labels", "updated"];
@@ -58,6 +60,8 @@ export async function issueCommand(args: string[]): Promise<string> {
   switch (sub as (typeof SUBCOMMANDS)[number]) {
     case "view":
       return issueView(rest);
+    case "fields":
+      return issueFields(rest);
     case "comments":
       return issueComments(rest);
     case "comment":
@@ -155,6 +159,42 @@ async function issueView(args: string[]): Promise<string> {
   help.push(`Run \`atl-axi issue transition ${key}\` to list status transitions`);
 
   return out(block({ issue: summary }), description ? "---" : "", description ? text.text : "", description ? "---" : "", helpBlock(help));
+}
+
+// Shown by `issue view` / `issue comments` or pure bookkeeping.
+const FIELDS_SKIP = new Set(["description", "comment", "worklog", "watches", "votes", "progress", "aggregateprogress", "workratio", "lastViewed", "issuelinks", "subtasks"]);
+
+async function issueFields(args: string[]): Promise<string> {
+  const command = "atl-axi issue fields";
+  const parsed = parseArgs(args, [{ name: "--editable", boolean: true }, { name: "--search" }], command);
+  const [raw] = expectPositionals(parsed, 1, `${command} <KEY> [--editable] [--search <text>]`);
+  const key = issueKey(raw);
+  const needle = flag(parsed, "--search")?.trim().toLowerCase();
+  const editable = bool(parsed, "--editable");
+
+  const [catalog, issue, meta] = await Promise.all([
+    fieldCatalog(),
+    fetchIssue(key, ["*all"]),
+    editable ? jiraJson(`${issuePath(key)}/editmeta`) : Promise.resolve(undefined),
+  ]);
+  const f = fields(issue);
+  const names = new Map(catalog.map((c) => [c.id, c.name]));
+  const screen = obj(obj(meta)["fields"]);
+  const ids = editable ? Object.keys(screen) : Object.keys(f).filter((id) => !FIELDS_SKIP.has(id) && !["none", "{}"].includes(formatValue(f[id])));
+  const rows = ids
+    .map((id) => ({ id, name: names.get(id) ?? (str(obj(screen[id])["name"]) || id), value: typeof f[id] === "number" ? (f[id] as number) : formatValue(f[id], 120) }))
+    .filter((r) => !needle || r.name.toLowerCase().includes(needle) || r.id.toLowerCase().includes(needle))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const scope = editable ? "on the edit screen" : "with a value";
+  if (rows.length === 0) return block({ issue: key, fields: `0 fields ${scope}${needle ? ` matching '${needle}'` : ""}` });
+  return out(
+    block({ issue: key, count: rows.length, fields: rows }),
+    helpBlock([
+      `Run \`atl-axi issue view ${key} --fields '<name>'\` for a full value`,
+      editable ? "editmeta can omit fields Jira still accepts; `issue edit --set ... --force` sends one anyway" : `Run \`atl-axi issue fields ${key} --editable\` for the fields you can set`,
+    ]),
+  );
 }
 
 async function issueComments(args: string[]): Promise<string> {

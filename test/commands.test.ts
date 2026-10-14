@@ -76,6 +76,23 @@ describe("search", () => {
   });
 });
 
+describe("issue fields", () => {
+  it("lists the issue's non-empty fields by name, and --editable lists the edit screen", async () => {
+    mockApi([
+      { path: ISSUE, json: issue("PROJ-1", { customfield_10014: 3, customfield_10103: null, labels: [], description: { type: "doc", content: [] } }) },
+      { path: `${ISSUE}/editmeta`, json: { fields: { summary: { name: "Summary" }, customfield_10103: { name: "Story point estimate" } } } },
+    ]);
+    const { stdout } = await run("issue", "fields", "PROJ-1");
+    expect(stdout).toContain("customfield_10014,Story Points,3");
+    expect(stdout).not.toContain("customfield_10103");
+    expect(stdout).not.toContain("description");
+
+    const edit = await run("issue", "fields", "PROJ-1", "--editable", "--search", "point");
+    expect(edit.stdout).toContain("customfield_10103,Story point estimate,none");
+    expect(edit.stdout).not.toContain("customfield_10014");
+  });
+});
+
 describe("issue edit", () => {
   const editmeta = { fields: { summary: {}, labels: {}, customfield_10014: {}, customfield_10010: {}, customfield_10200: {} } };
 
