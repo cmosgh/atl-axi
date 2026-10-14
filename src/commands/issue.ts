@@ -30,7 +30,7 @@ flags{comments}:
 flags{comment}:
   --body <text> | --body-file <path|-> (plain text; blank-line paragraphs, '- ' lists, fenced code)
 flags{create}:
-  --project <KEY> --type <name> --summary <text> (required), --description[-file], --parent <KEY>, --points <n>, --sprint <id>, --labels <a,b>, --assignee <me|account-id>, --set '<field>=<value>' (repeatable)
+  --project <KEY> --type <name> --summary <text> (required), --description[-file], --parent <KEY>, --points <n>, --sprint <id>, --labels <a,b>, --assignee <me|account-id>, --set '<field>=<value>' (repeatable), --allow-duplicate (skip the guard against your own same-summary issue from the last day)
 flags{edit}:
   --summary, --description[-file], --assignee <me|none|account-id>, --points <n|none>, --sprint <id|none>, --parent <KEY|none>, --labels <a,b> (replace), --add-label, --remove-label (repeatable), --priority <name>, --set '<field>=<value>' (repeatable)
 flags{transition}:
@@ -418,6 +418,7 @@ async function issueCreate(args: string[]): Promise<string> {
       { name: "--labels" },
       { name: "--assignee" },
       { name: "--set", repeatable: true },
+      { name: "--allow-duplicate", boolean: true },
     ],
     command,
   );
@@ -440,11 +441,17 @@ async function issueCreate(args: string[]): Promise<string> {
     throw usageError(`unknown issue type '${typeName}' in ${project}`, [`types: ${types.map((t) => str(t["name"])).join(", ")}`]);
   }
 
-  // Duplicate guard: same summary created in the last day means a retried command.
-  const existing = await searchJql(`project = ${project} AND summary ~ ${jqlString(summary)} AND created >= -1d`, ["summary"], 20).catch(() => undefined);
-  const dup = existing?.issues.find((i) => str(fields(i)["summary"]) === summary);
-  if (dup) {
-    return out(block({ issue: str(dup["key"]), result: "an issue with this summary was created in the last day (no-op)" }), helpBlock([`Run \`atl-axi issue view ${str(dup["key"])}\``]));
+  // Duplicate guard: your own same-summary issue from the last day means a retried command.
+  if (!bool(parsed, "--allow-duplicate")) {
+    const jql = `project = ${project} AND reporter = currentUser() AND summary ~ ${jqlString(summary)} AND created >= -1d`;
+    const existing = await searchJql(jql, ["summary"], 20).catch(() => undefined);
+    const dup = existing?.issues.find((i) => str(fields(i)["summary"]) === summary);
+    if (dup) {
+      return out(
+        block({ issue: str(dup["key"]), result: "you created an issue with this summary in the last day (no-op)" }),
+        helpBlock([`Run \`atl-axi issue view ${str(dup["key"])}\``, "Pass `--allow-duplicate` to create another one anyway"]),
+      );
+    }
   }
 
   const payload: Obj = { project: { key: project }, issuetype: { id: str(type["id"]) }, summary };
