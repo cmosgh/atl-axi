@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ANA, doc, issue, ME, mockApi, run, useTestEnv } from "./helpers.js";
 
@@ -272,6 +275,18 @@ describe("issue create", () => {
     ]);
     expect((await run("issue", "create", "--project", "PROJ", "--type", "Task", "--summary", "New thing")).stdout).toContain("(no-op)");
     expect(dup.calls.some((c) => c.method === "POST")).toBe(false);
+    const search = dup.calls.find((c) => c.path === "/rest/api/3/search/jql")!;
+    expect(search.url.searchParams.get("jql")).toContain("reporter = currentUser()");
+  });
+
+  it("--allow-duplicate skips the guard", async () => {
+    const { calls } = mockApi([
+      { path: "/rest/api/3/issue/createmeta/PROJ/issuetypes", json: { issueTypes: [{ id: "10001", name: "Task" }] } },
+      { method: "POST", path: "/rest/api/3/issue", json: { key: "PROJ-10" } },
+    ]);
+    const { stdout } = await run("issue", "create", "--project", "PROJ", "--type", "Task", "--summary", "New thing", "--allow-duplicate");
+    expect(stdout).toContain("issue: PROJ-10");
+    expect(calls.some((c) => c.path === "/rest/api/3/search/jql")).toBe(false);
   });
 });
 
@@ -340,5 +355,42 @@ describe("api", () => {
     const { stdout } = await run("api", "/rest/api/3/../../../../evil");
     expect(calls.every((c) => c.url.pathname.startsWith("/ex/jira/test-cloud"))).toBe(true);
     expect(stdout).toContain("error");
+  });
+});
+
+describe("setup hooks", () => {
+  const saved = { home: process.env["HOME"], argv1: process.argv[1] };
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "atl-axi-home-"));
+    process.env["HOME"] = home;
+  });
+  afterEach(() => {
+    process.env["HOME"] = saved.home;
+    process.argv[1] = saved.argv1!;
+  });
+
+  it("fails instead of claiming success when nothing was written", async () => {
+    // Under vitest argv[1] is not a atl-axi binary, so the SDK skips the install.
+    const { stdout, exitCode } = await run("setup", "hooks");
+    expect(exitCode).not.toBe(0);
+    expect(stdout).toContain("no hooks were installed");
+    expect(stdout).toContain("code: SETUP_FAILED");
+  });
+
+  it("reports installed agents and fails on a partial install", async () => {
+    const bin = join(home, "node_modules", ".bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "atl-axi"), "");
+    process.argv[1] = join(bin, "atl-axi");
+    writeFileSync(join(home, ".codex"), "not a directory");
+    const partial = await run("setup", "hooks");
+    expect(partial.exitCode).not.toBe(0);
+    expect(partial.stdout).toContain("hooks only partly installed (installed: Claude Code; OpenCode)");
+    expect(partial.stdout).toContain(".codex");
+
+    const status = await run("setup", "status");
+    expect(status.stdout).toContain("claude_code: installed");
+    expect(status.stdout).toContain("codex: not installed");
   });
 });
