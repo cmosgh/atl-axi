@@ -39,6 +39,8 @@ Requires Node.js 20+.
 npm install -g atl-axi
 ```
 
+Prefer the global install over `npx -y atl-axi`: npx adds start-up time and, inside npm workspaces, `npm notice` lines on stderr for every call.
+
 One line in `CLAUDE.md` / `AGENTS.md`:
 
 ```
@@ -81,6 +83,7 @@ Override the stored login (CI, containers, agent shells):
 | `JIRA_CLOUD_ID` | Cloud id directly; skips the lookup and wins over `ATLASSIAN_SITE` |
 | `ATL_AXI_NO_KEYCHAIN` | `1` never reads or writes the OS keychain |
 | `ATL_AXI_CONFIG_DIR` | Config and cache directory (default `$XDG_CONFIG_HOME/atl-axi` or `~/.config/atl-axi`) |
+| `ATL_AXI_POINTS_FIELD` | Story points field to write (name or id), e.g. `customfield_10014`, when the issue screen offers a different one |
 
 ## Commands
 

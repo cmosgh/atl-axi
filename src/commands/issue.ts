@@ -30,13 +30,14 @@ flags{comments}:
 flags{comment}:
   --body <text> | --body-file <path|-> (plain text; blank-line paragraphs, '- ' lists, fenced code)
 flags{create}:
-  --project <KEY> --type <name> --summary <text> (required), --description[-file], --parent <KEY>, --points <n>, --sprint <id>, --labels <a,b>, --assignee <me|account-id>, --set '<field>=<value>' (repeatable), --allow-duplicate (skip the guard against your own same-summary issue from the last day)
+  --project <KEY> --type <name> --summary <text> (required), --description[-file], --parent <KEY>, --points <n>, --points-field <name|id>, --sprint <id>, --labels <a,b>, --assignee <me|account-id>, --set '<field>=<value>' (repeatable), --allow-duplicate (skip the guard against your own same-summary issue from the last day)
 flags{edit}:
-  --summary, --description[-file], --assignee <me|none|account-id>, --points <n|none>, --sprint <id|none>, --parent <KEY|none>, --labels <a,b> (replace), --add-label, --remove-label (repeatable), --priority <name>, --set '<field>=<value>' (repeatable)
+  --summary, --description[-file], --assignee <me|none|account-id>, --points <n|none>, --points-field <name|id>, --sprint <id|none>, --parent <KEY|none>, --labels <a,b> (replace), --add-label, --remove-label (repeatable), --priority <name>, --set '<field>=<value>' (repeatable), --force (send --set fields that are not on the edit screen)
 flags{transition}:
   --resolution <name> (when the transition screen asks for one). No target = list available transitions
 notes:
   link relations come from the site's link types, e.g. 'blocks', 'is blocked by', 'relates to', 'duplicates'
+  --points writes the points field on the issue's screen; --points-field (or ATL_AXI_POINTS_FIELD) names the field to write instead, skipping the screen check
 examples[6]:
   atl-axi issue view PROJ-123
   atl-axi issue edit PROJ-123 --points 3 --sprint 578
@@ -254,6 +255,15 @@ function parseSprint(raw: string): number | null {
   return Number(raw);
 }
 
+/** Explicit --points-field / ATL_AXI_POINTS_FIELD; validated before any write. */
+function pointsOverride(parsed: ParsedArgs, catalog: FieldDef[]): FieldDef | undefined {
+  const raw = flag(parsed, "--points-field") ?? process.env["ATL_AXI_POINTS_FIELD"];
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const field = findField(catalog, raw);
+  if (field.type !== "number") throw usageError(`${field.name} (${field.id}) is not a number field`, ["Run `atl-axi field list --search points`"]);
+  return field;
+}
+
 function pick(candidates: FieldDef[], screen: Obj, label: string, key: string, current: Obj = {}): FieldDef {
   const field = onScreen(candidates, screen, current);
   const holder = candidates.find((c) => current[c.id] !== null && current[c.id] !== undefined);
@@ -262,6 +272,7 @@ function pick(candidates: FieldDef[], screen: Obj, label: string, key: string, c
     throw axiError(`${holder.name} (${holder.id}) holds ${formatValue(current[holder.id])} on ${key} but is not on its edit screen`, "VALIDATION_ERROR", [
       `Writing ${field.name} (${field.id}) instead would leave two ${label} values; add ${holder.name} to the screen in Jira`,
       `Or write the other field deliberately: \`atl-axi issue edit ${key} --set '${field.name}=<value>'\``,
+      `Or write ${holder.name} off-screen: \`atl-axi issue edit ${key} --points <n> --points-field ${holder.id}\``,
     ]);
   }
   if (!field) {
@@ -285,6 +296,8 @@ const EDIT_FLAGS = [
   { name: "--remove-label", repeatable: true },
   { name: "--priority" },
   { name: "--set", repeatable: true },
+  { name: "--points-field" },
+  { name: "--force", boolean: true },
 ];
 
 async function issueEdit(args: string[]): Promise<string> {
@@ -320,6 +333,7 @@ async function issueEdit(args: string[]): Promise<string> {
 
   const catalog = await fieldCatalog();
   const setFields = sets.map(([name, value]) => [findField(catalog, name), value] as const);
+  const forcedPoints = points === undefined ? undefined : pointsOverride(parsed, catalog);
   const [issue, meta] = await Promise.all([
     fetchIssue(key, [
       ...BASE_FIELDS,
@@ -327,6 +341,7 @@ async function issueEdit(args: string[]): Promise<string> {
       ...pointsFields(catalog).map((f) => f.id),
       ...sprintFields(catalog).map((f) => f.id),
       ...setFields.map(([f]) => f.id),
+      ...(forcedPoints ? [forcedPoints.id] : []),
     ]),
     jiraJson(`${issuePath(key)}/editmeta`),
   ]);
@@ -344,7 +359,7 @@ async function issueEdit(args: string[]): Promise<string> {
     consider({ id: "description", name: "description" }, textToAdf(description), adfToText(f["description"]).trim() === description.trim(), `${description.trim().length} chars`);
   }
   if (points !== undefined) {
-    const field = pick(pointsFields(catalog), screen, "story points", key, f);
+    const field = forcedPoints ?? pick(pointsFields(catalog), screen, "story points", key, f);
     consider(field, points, (num(f[field.id]) ?? null) === points, points ?? "none");
   }
   if (sprint !== undefined) {
@@ -367,7 +382,11 @@ async function issueEdit(args: string[]): Promise<string> {
     consider({ id: "priority", name: "priority" }, { name: priority }, str(obj(f["priority"])["name"]).toLowerCase() === priority.toLowerCase(), priority);
   }
   for (const [field, value] of setFields) {
-    if (!(field.id in screen)) throw axiError(`${field.name} (${field.id}) is not on the edit screen for ${key}`, "VALIDATION_ERROR");
+    if (!(field.id in screen) && !bool(parsed, "--force")) {
+      throw axiError(`${field.name} (${field.id}) is not on the edit screen for ${key}`, "VALIDATION_ERROR", [
+        "Pass `--force` to send it anyway; Jira rejects it if the field cannot be set on this issue",
+      ]);
+    }
     const coerced = coerceValue(field, value);
     consider(field, coerced, formatValue(f[field.id]) === formatValue(coerced), formatValue(coerced));
   }
@@ -419,6 +438,7 @@ async function issueCreate(args: string[]): Promise<string> {
       { name: "--assignee" },
       { name: "--set", repeatable: true },
       { name: "--allow-duplicate", boolean: true },
+      { name: "--points-field" },
     ],
     command,
   );
@@ -466,7 +486,7 @@ async function issueCreate(args: string[]): Promise<string> {
       obj(await jiraJson(`/rest/api/3/issue/createmeta/${project}/issuetypes/${str(type["id"])}`, { query: { maxResults: 200 } }))["fields"],
     ).map(obj);
     const screen: Obj = Object.fromEntries(createFields.map((cf) => [str(cf["fieldId"]), true]));
-    if (points !== undefined) payload[pick(pointsFields(catalog), screen, "story points", `${project} ${typeName}`).id] = points;
+    if (points !== undefined) payload[(pointsOverride(parsed, catalog) ?? pick(pointsFields(catalog), screen, "story points", `${project} ${typeName}`)).id] = points;
     if (sprint !== undefined) payload[pick(sprintFields(catalog), screen, "sprint", `${project} ${typeName}`).id] = sprint;
     for (const [name, value] of sets) {
       const field = findField(catalog, name);

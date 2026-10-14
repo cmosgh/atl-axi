@@ -107,6 +107,41 @@ describe("issue edit", () => {
     expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ fields: { customfield_10014: 2 } });
   });
 
+  it("--points-field and ATL_AXI_POINTS_FIELD write the named field even when it is off screen", async () => {
+    const offScreen = { fields: { summary: {}, customfield_10103: {} } };
+    const { calls } = mockApi([
+      { path: ISSUE, json: issue("PROJ-1", { customfield_10014: null, customfield_10103: null }) },
+      { path: `${ISSUE}/editmeta`, json: offScreen },
+      { method: "PUT", path: ISSUE, status: 204 },
+    ]);
+    await run("issue", "edit", "PROJ-1", "--points", "3", "--points-field", "customfield_10014");
+    expect(calls.filter((c) => c.method === "PUT").at(-1)!.body).toEqual({ fields: { customfield_10014: 3 } });
+    process.env["ATL_AXI_POINTS_FIELD"] = "Story Points";
+    try {
+      await run("issue", "edit", "PROJ-1", "--points", "5");
+    } finally {
+      delete process.env["ATL_AXI_POINTS_FIELD"];
+    }
+    expect(calls.filter((c) => c.method === "PUT").at(-1)!.body).toEqual({ fields: { customfield_10014: 5 } });
+    const bad = await run("issue", "edit", "PROJ-1", "--points", "5", "--points-field", "summary");
+    expect(bad.exitCode).toBe(2);
+    expect(bad.stdout).toContain("is not a number field");
+  });
+
+  it("--set refuses an off-screen field unless --force", async () => {
+    const offScreen = { fields: { summary: {} } };
+    const { calls } = mockApi([
+      { path: ISSUE, json: issue("PROJ-1", { customfield_10014: null }) },
+      { path: `${ISSUE}/editmeta`, json: offScreen },
+      { method: "PUT", path: ISSUE, status: 204 },
+    ]);
+    const refused = await run("issue", "edit", "PROJ-1", "--set", "customfield_10014=2");
+    expect(refused.exitCode).toBe(2);
+    expect(refused.stdout).toContain("Pass `--force`");
+    await run("issue", "edit", "PROJ-1", "--set", "customfield_10014=2", "--force");
+    expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ fields: { customfield_10014: 2 } });
+  });
+
   it("refuses to fill an empty points field when the value lives in one off the edit screen", async () => {
     const offScreen = { fields: { summary: {}, customfield_10103: {} } };
     const { calls } = mockApi([
@@ -355,6 +390,15 @@ describe("api", () => {
     const { stdout } = await run("api", "/rest/api/3/../../../../evil");
     expect(calls.every((c) => c.url.pathname.startsWith("/ex/jira/test-cloud"))).toBe(true);
     expect(stdout).toContain("error");
+  });
+});
+
+describe("api flags", () => {
+  it("points --body at --data", async () => {
+    mockApi([]);
+    const { stdout, exitCode } = await run("api", "POST", "/rest/api/3/issue", "--body", "{}");
+    expect(exitCode).toBe(2);
+    expect(stdout).toContain("--body is not supported here; use --data instead");
   });
 });
 

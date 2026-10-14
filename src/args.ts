@@ -34,6 +34,8 @@ const RENAMED: Record<string, string> = {
   "--jql": "--query",
   "--max": "--limit",
   "--max-results": "--limit",
+  "--body": "--data",
+  "--json": "--data",
 };
 
 /**
