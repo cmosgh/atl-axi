@@ -17,7 +17,7 @@ import {
 import { fetchIssue, fields, issueKey, issuePath, jqlString, projectKey, searchJql, statusName, userName } from "../issue-api.js";
 import { currentUser } from "../me.js";
 import { arr, block, dig, helpBlock, num, obj, out, relTime, str, truncate, type Obj } from "../render.js";
-import { readText } from "../text-input.js";
+import { readAdf, readText } from "../text-input.js";
 import { linkCommand, linkRows } from "./link.js";
 
 export const ISSUE_HELP = `usage: atl-axi issue <subcommand> [args] [flags]
@@ -30,13 +30,14 @@ flags{comments}:
 flags{comment}:
   --body <text> | --body-file <path|-> (plain text; blank-line paragraphs, '- ' lists, fenced code)
 flags{create}:
-  --project <KEY> --type <name> --summary <text> (required), --description[-file], --parent <KEY>, --points <n>, --points-field <name|id>, --sprint <id>, --labels <a,b>, --assignee <me|account-id>, --set '<field>=<value>' (repeatable), --allow-duplicate (skip the guard against your own same-summary issue from the last day)
+  --project <KEY> --type <name> --summary <text> (required), --description[-file] | --description-adf <path|->, --parent <KEY>, --points <n>, --points-field <name|id>, --sprint <id>, --labels <a,b>, --assignee <me|account-id>, --set '<field>=<value>' (repeatable), --allow-duplicate (skip the guard against your own same-summary issue from the last day)
 flags{edit}:
-  --summary, --description[-file], --assignee <me|none|account-id>, --points <n|none>, --points-field <name|id>, --sprint <id|none>, --parent <KEY|none>, --labels <a,b> (replace), --add-label, --remove-label (repeatable), --priority <name>, --set '<field>=<value>' (repeatable), --force (send --set fields that are not on the edit screen)
+  --summary, --description[-file] | --description-adf <path|->, --assignee <me|none|account-id>, --points <n|none>, --points-field <name|id>, --sprint <id|none>, --parent <KEY|none>, --labels <a,b> (replace), --add-label, --remove-label (repeatable), --priority <name>, --set '<field>=<value>' (repeatable), --force (send --set fields that are not on the edit screen)
 flags{transition}:
   --resolution <name> (when the transition screen asks for one). No target = list available transitions
 notes:
   link relations come from the site's link types, e.g. 'blocks', 'is blocked by', 'relates to', 'duplicates'
+  descriptions are Markdown-style: # headings, - and 1. lists (indent to nest), \`\`\` fences, > quotes, \`code\`, **bold**, [text](url). --description-adf takes exact ADF JSON
   --points writes the points field on the issue's screen; --points-field (or ATL_AXI_POINTS_FIELD) names the field to write instead, skipping the screen check
 examples[6]:
   atl-axi issue view PROJ-123
@@ -255,6 +256,15 @@ function parseSprint(raw: string): number | null {
   return Number(raw);
 }
 
+/** --description[-file] (Markdown-style text) or --description-adf (exact ADF JSON). */
+function descriptionInput(parsed: ParsedArgs, usage: string): { doc: Obj; text?: string } | undefined {
+  const text = readText(parsed, "--description", usage);
+  const adf = readAdf(parsed, "--description");
+  if (text !== undefined && adf !== undefined) throw usageError("give only one of --description[-file] or --description-adf", [usage]);
+  if (adf) return { doc: adf };
+  return text === undefined ? undefined : { doc: textToAdf(text), text };
+}
+
 /** Explicit --points-field / ATL_AXI_POINTS_FIELD; validated before any write. */
 function pointsOverride(parsed: ParsedArgs, catalog: FieldDef[]): FieldDef | undefined {
   const raw = flag(parsed, "--points-field") ?? process.env["ATL_AXI_POINTS_FIELD"];
@@ -287,6 +297,7 @@ const EDIT_FLAGS = [
   { name: "--summary" },
   { name: "--description" },
   { name: "--description-file" },
+  { name: "--description-adf" },
   { name: "--assignee" },
   { name: "--points" },
   { name: "--sprint" },
@@ -309,7 +320,7 @@ async function issueEdit(args: string[]): Promise<string> {
 
   // Validate every value before the first request.
   const summary = flag(parsed, "--summary");
-  const description = readText(parsed, "--description", usage);
+  const description = descriptionInput(parsed, usage);
   const points = flag(parsed, "--points") === undefined ? undefined : parsePoints(flag(parsed, "--points")!);
   const sprint = flag(parsed, "--sprint") === undefined ? undefined : parseSprint(flag(parsed, "--sprint")!);
   const parentRaw = flag(parsed, "--parent");
@@ -356,7 +367,12 @@ async function issueEdit(args: string[]): Promise<string> {
 
   if (summary !== undefined) consider({ id: "summary", name: "summary" }, summary, str(f["summary"]) === summary, summary);
   if (description !== undefined) {
-    consider({ id: "description", name: "description" }, textToAdf(description), adfToText(f["description"]).trim() === description.trim(), `${description.trim().length} chars`);
+    const same =
+      description.text === undefined
+        ? JSON.stringify(obj(f["description"])["content"] ?? []) === JSON.stringify(description.doc["content"] ?? [])
+        : adfToText(f["description"]).trim() === description.text.trim();
+    const size = description.text === undefined ? `${arr(description.doc["content"]).length} ADF blocks` : `${description.text.trim().length} chars`;
+    consider({ id: "description", name: "description" }, description.doc, same, size);
   }
   if (points !== undefined) {
     const field = forcedPoints ?? pick(pointsFields(catalog), screen, "story points", key, f);
@@ -431,6 +447,7 @@ async function issueCreate(args: string[]): Promise<string> {
       { name: "--summary" },
       { name: "--description" },
       { name: "--description-file" },
+      { name: "--description-adf" },
       { name: "--parent" },
       { name: "--points" },
       { name: "--sprint" },
@@ -448,7 +465,7 @@ async function issueCreate(args: string[]): Promise<string> {
   const project = projectKey(flag(parsed, "--project"));
   const typeName = flag(parsed, "--type")!;
   const summary = flag(parsed, "--summary")!.trim();
-  const description = readText(parsed, "--description", usage);
+  const description = descriptionInput(parsed, usage);
   const parent = flag(parsed, "--parent") === undefined ? undefined : issueKey(flag(parsed, "--parent"), "--parent");
   const points = flag(parsed, "--points") === undefined ? undefined : parsePoints(flag(parsed, "--points")!);
   const sprint = flag(parsed, "--sprint") === undefined ? undefined : parseSprint(flag(parsed, "--sprint")!);
@@ -475,7 +492,7 @@ async function issueCreate(args: string[]): Promise<string> {
   }
 
   const payload: Obj = { project: { key: project }, issuetype: { id: str(type["id"]) }, summary };
-  if (description) payload["description"] = textToAdf(description);
+  if (description) payload["description"] = description.doc;
   if (parent) payload["parent"] = { key: parent };
   if (labels.length > 0) payload["labels"] = labels;
   if (flag(parsed, "--assignee") !== undefined) payload["assignee"] = { accountId: await resolveAssignee(flag(parsed, "--assignee")!) };

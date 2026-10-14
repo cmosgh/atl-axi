@@ -6,9 +6,10 @@ import { block, helpBlock, out, type Obj } from "../render.js";
 export const API_HELP = `usage: atl-axi api [GET|POST|PUT|DELETE] <path> [flags]
 Escape hatch for any Jira Cloud REST endpoint (/rest/api/3/..., /rest/agile/1.0/...), sent through the configured site.
 flags:
-  --query <key=value> (repeatable), --data <json> (request body), --full (do not truncate long strings), --confirm (required for DELETE)
-examples[3]:
+  --query <key=value> (repeatable), --data <json> (request body), --full (do not truncate long strings), --raw (print the response body as compact JSON, for jq or a read-modify-write), --confirm (required for DELETE)
+examples[4]:
   atl-axi api /rest/api/3/issue/PROJ-1/worklog
+  atl-axi api /rest/api/3/issue/PROJ-1 --query fields=description --raw
   atl-axi api /rest/api/3/project/PROJ/versions
   atl-axi api PUT /rest/api/3/issue/PROJ-1 --data '{"fields":{"customfield_10050":"x"}}'
 `;
@@ -50,6 +51,7 @@ export async function apiCommand(args: string[]): Promise<string> {
       { name: "--query", repeatable: true },
       { name: "--data" },
       { name: "--full", boolean: true },
+      { name: "--raw", boolean: true },
       { name: "--confirm", boolean: true },
     ],
     command,
@@ -97,6 +99,7 @@ export async function apiCommand(args: string[]): Promise<string> {
   }
 
   const response = await jiraJson(path, { method, query, body });
+  if (bool(parsed, "--raw")) return JSON.stringify(response);
   const stats = { cut: false };
   const shown = bool(parsed, "--full") ? response : shrink(response, stats);
   const payload: Obj =

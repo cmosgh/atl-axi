@@ -1,7 +1,7 @@
 import { arr, num, obj, str, type Obj } from "./render.js";
 
-// Atlassian Document Format <-> plain text. Lossy by design: agents read and
-// write text, Jira stores ADF.
+// Atlassian Document Format <-> Markdown-style text. Headings, lists (nested),
+// code, quotes, rules, bold and links round-trip; other nodes are rendered lossily.
 
 function inline(nodes: unknown[]): string {
   return nodes
@@ -13,8 +13,10 @@ function inline(nodes: unknown[]): string {
           const text = str(node["text"]);
           const link = arr(node["marks"]).map(obj).find((m) => m["type"] === "link");
           const href = str(obj(link?.["attrs"])["href"]);
-          if (arr(node["marks"]).map(obj).some((m) => m["type"] === "code")) return `\`${text}\``;
-          return href && href !== text ? `${text} (${href})` : text;
+          const marks = arr(node["marks"]).map(obj);
+          if (marks.some((m) => m["type"] === "code")) return `\`${text}\``;
+          const shown = marks.some((m) => m["type"] === "strong") ? `**${text}**` : text;
+          return href && href !== text ? `[${shown}](${href})` : shown;
         }
         case "hardBreak":
           return "\n";
@@ -23,6 +25,7 @@ function inline(nodes: unknown[]): string {
         case "emoji":
           return str(attrs["text"]) || str(attrs["shortName"]);
         case "inlineCard":
+          return `<${str(attrs["url"])}>`;
         case "blockCard":
           return str(attrs["url"]);
         case "status":
@@ -101,21 +104,22 @@ export function adfToText(doc: unknown): string {
   return blocks(arr(obj(doc)["content"])).trim();
 }
 
-const URL_RE = /(https?:\/\/[^\s)]+)/g;
+// Inline tokens: `code`, <url> (smart link), [text](url), **bold**, bare URLs.
+const INLINE_RE = /(`[^`]+`|<https?:\/\/[^\s>]+>|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|\*\*[^*\n]+\*\*|https?:\/\/[^\s)]+)/g;
 
 function textNodes(line: string): Obj[] {
   const nodes: Obj[] = [];
-  // Split on inline code first, then linkify plain segments.
-  line.split(/(`[^`]+`)/).forEach((segment) => {
-    if (segment === "") return;
-    if (/^`[^`]+`$/.test(segment)) {
-      nodes.push({ type: "text", text: segment.slice(1, -1), marks: [{ type: "code" }] });
-      return;
-    }
-    segment.split(URL_RE).forEach((part, i) => {
-      if (part === "") return;
-      nodes.push(i % 2 === 1 ? { type: "text", text: part, marks: [{ type: "link", attrs: { href: part } }] } : { type: "text", text: part });
-    });
+  line.split(INLINE_RE).forEach((part, i) => {
+    if (part === "") return;
+    if (i % 2 === 0) nodes.push({ type: "text", text: part });
+    else if (part.startsWith("`")) nodes.push({ type: "text", text: part.slice(1, -1), marks: [{ type: "code" }] });
+    else if (part.startsWith("<")) nodes.push({ type: "inlineCard", attrs: { url: part.slice(1, -1) } });
+    else if (part.startsWith("**")) nodes.push(...textNodes(part.slice(2, -2)).map((n) => ({ ...n, marks: [...arr(n["marks"]), { type: "strong" }] })));
+    else if (part.startsWith("[")) {
+      const m = part.match(/^\[(.+)\]\((.+)\)$/)!;
+      const link = { type: "link", attrs: { href: m[2] } };
+      nodes.push(...textNodes(m[1]!).map((n) => ({ ...n, marks: [...arr(n["marks"]), link] })));
+    } else nodes.push({ type: "text", text: part, marks: [{ type: "link", attrs: { href: part } }] });
   });
   return nodes;
 }
@@ -129,31 +133,43 @@ function paragraph(lines: string[]): Obj {
   return { type: "paragraph", content };
 }
 
-function list(lines: string[], ordered: boolean): Obj {
+const BULLET = /^(\s*)[-*]\s+/;
+const ORDERED = /^(\s*)(\d+)[.)]\s+/;
+const width = (line: string): number => line.length - line.trimStart().length;
+
+/** A run of list lines; deeper-indented lines nest under the previous item. */
+function list(lines: string[]): Obj {
+  const ordered = ORDERED.test(lines[0]!);
+  const base = width(lines[0]!);
+  const items: Array<{ first: string; rest: string[] }> = [];
+  for (const line of lines) {
+    if (width(line) <= base && (BULLET.test(line) || ORDERED.test(line))) items.push({ first: line.replace(ordered ? ORDERED : BULLET, ""), rest: [] });
+    else items[items.length - 1]!.rest.push(line);
+  }
+  const start = ordered ? Number(lines[0]!.match(ORDERED)![2]) : 1;
   return {
     type: ordered ? "orderedList" : "bulletList",
-    content: lines.map((line) => ({
-      type: "listItem",
-      content: [paragraph([line.replace(ordered ? /^\s*\d+[.)]\s+/ : /^\s*[-*]\s+/, "")])],
-    })),
+    ...(ordered && start !== 1 ? { attrs: { order: start } } : {}),
+    content: items.map((item) => {
+      const nested = item.rest.length > 0 ? arr(textToAdf(dedent(item.rest)).content) : [];
+      return { type: "listItem", content: [paragraph([item.first]), ...nested] };
+    }),
   };
 }
 
-/** Plain text (blank-line paragraphs, `- ` lists, `#` headings, fenced code) to ADF. */
-export function textToAdf(text: string): Obj {
+function dedent(lines: string[]): string {
+  const cut = Math.min(...lines.filter((l) => l.trim() !== "").map(width));
+  return lines.map((l) => l.slice(cut)).join("\n");
+}
+
+/** Markdown-style text (paragraphs, #-headings, nested -/1. lists, fences, > quotes, ----) to ADF. */
+export function textToAdf(text: string): Obj & { content: Obj[] } {
   const content: Obj[] = [];
   const lines = text.replace(/\r\n/g, "\n").split("\n");
-  let buffer: string[] = [];
-
+  let para: string[] = [];
   const flush = (): void => {
-    if (buffer.length === 0) return;
-    if (buffer.every((l) => /^\s*[-*]\s+/.test(l))) content.push(list(buffer, false));
-    else if (buffer.every((l) => /^\s*\d+[.)]\s+/.test(l))) content.push(list(buffer, true));
-    else if (buffer.length === 1 && /^#{1,6}\s/.test(buffer[0]!)) {
-      const level = buffer[0]!.match(/^#+/)![0].length;
-      content.push({ type: "heading", attrs: { level }, content: textNodes(buffer[0]!.replace(/^#+\s+/, "")) });
-    } else content.push(paragraph(buffer));
-    buffer = [];
+    if (para.length > 0) content.push(paragraph(para));
+    para = [];
   };
 
   for (let i = 0; i < lines.length; i++) {
@@ -168,10 +184,34 @@ export function textToAdf(text: string): Obj {
         ...(fence[1] ? { attrs: { language: fence[1] } } : {}),
         content: code.length > 0 ? [{ type: "text", text: code.join("\n") }] : [],
       });
-      continue;
+    } else if (line.trim() === "") {
+      flush();
+    } else if (/^#{1,6}\s/.test(line)) {
+      flush();
+      content.push({ type: "heading", attrs: { level: line.match(/^#+/)![0].length }, content: textNodes(line.replace(/^#+\s+/, "")) });
+    } else if (/^-{3,}\s*$/.test(line)) {
+      flush();
+      content.push({ type: "rule" });
+    } else if (/^>\s?/.test(line)) {
+      flush();
+      const quoted: string[] = [];
+      for (; i < lines.length && /^>\s?/.test(lines[i]!); i++) quoted.push(lines[i]!.replace(/^>\s?/, ""));
+      i--;
+      content.push({ type: "blockquote", content: textToAdf(quoted.join("\n")).content });
+    } else if (BULLET.test(line) || ORDERED.test(line)) {
+      flush();
+      const run = [line];
+      // Continue while lines are list items or indented continuations.
+      for (i++; i < lines.length && lines[i]!.trim() !== "" && (BULLET.test(lines[i]!) || ORDERED.test(lines[i]!) || width(lines[i]!) > width(line)); i++) {
+        const same = ORDERED.test(line) ? ORDERED.test(lines[i]!) : BULLET.test(lines[i]!);
+        if (width(lines[i]!) <= width(line) && !same) break;
+        run.push(lines[i]!);
+      }
+      i--;
+      content.push(list(run));
+    } else {
+      para.push(line);
     }
-    if (line.trim() === "") flush();
-    else buffer.push(line);
   }
   flush();
   return { type: "doc", version: 1, content };

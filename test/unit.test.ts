@@ -41,7 +41,32 @@ describe("adf", () => {
         },
       ],
     });
-    expect(text).toBe("## Plan\n\n- one\n\n```ts\nx()\n```\n\n@Ana see docs (https://example.test)");
+    expect(text).toBe("## Plan\n\n- one\n\n```ts\nx()\n```\n\n@Ana see [docs](https://example.test)");
+  });
+
+  it("round-trips Markdown-style structure without blank-line separators", () => {
+    const source = [
+      "## Context",
+      "The **sync worker** retries `fetch` - see [the runbook](https://example.test/rb).",
+      "1. first",
+      "   - nested a",
+      "   - nested b",
+      "2. second",
+      "",
+      "> quoted",
+      "",
+      "----",
+    ].join("\n");
+    const doc = textToAdf(source);
+    expect(doc.content.map((n) => n["type"])).toEqual(["heading", "paragraph", "orderedList", "blockquote", "rule"]);
+    const para = JSON.stringify(doc.content[1]);
+    expect(para).toContain('"strong"');
+    expect(para).toContain('"code"');
+    expect(para).toContain('"href":"https://example.test/rb"');
+    const first = (doc.content[2]!["content"] as Array<Record<string, unknown[]>>)[0]!;
+    expect(first["content"]!.map((n) => (n as Record<string, unknown>)["type"])).toEqual(["paragraph", "bulletList"]);
+    // Rendering and parsing again is stable.
+    expect(textToAdf(adfToText(doc))).toEqual(doc);
   });
 
   it("round-trips plain text through ADF", () => {

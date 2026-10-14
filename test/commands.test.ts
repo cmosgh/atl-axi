@@ -128,6 +128,32 @@ describe("issue edit", () => {
     expect(bad.stdout).toContain("is not a number field");
   });
 
+  it("--description-adf sends the document unchanged and no-ops when it matches", async () => {
+    const doc = { type: "doc", version: 1, content: [{ type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Plan" }] }] };
+    const file = join(mkdtempSync(join(tmpdir(), "atl-axi-adf-")), "d.json");
+    writeFileSync(file, JSON.stringify(doc));
+    const { calls } = mockApi([
+      { path: ISSUE, json: issue("PROJ-1", { description: { type: "doc", version: 1, content: [] } }) },
+      { path: `${ISSUE}/editmeta`, json: editmeta },
+      { method: "PUT", path: ISSUE, status: 204 },
+    ]);
+    await run("issue", "edit", "PROJ-1", "--description-adf", file);
+    expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ fields: { description: doc } });
+
+    vi.unstubAllGlobals();
+    const same = mockApi([
+      { path: ISSUE, json: issue("PROJ-1", { description: doc }) },
+      { path: `${ISSUE}/editmeta`, json: editmeta },
+    ]);
+    expect((await run("issue", "edit", "PROJ-1", "--description-adf", file)).stdout).toContain("(no-op)");
+    expect(same.calls.some((c) => c.method === "PUT")).toBe(false);
+
+    writeFileSync(file, '{"type":"paragraph"}');
+    const bad = await run("issue", "edit", "PROJ-1", "--description-adf", file);
+    expect(bad.exitCode).toBe(2);
+    expect(bad.stdout).toContain("must be an ADF document");
+  });
+
   it("--set refuses an off-screen field unless --force", async () => {
     const offScreen = { fields: { summary: {} } };
     const { calls } = mockApi([
@@ -394,6 +420,12 @@ describe("api", () => {
 });
 
 describe("api flags", () => {
+  it("--raw prints the response body as compact JSON", async () => {
+    mockApi([{ path: ISSUE, json: { key: "PROJ-1", fields: { description: { type: "doc", version: 1, content: [] } } } }]);
+    const { stdout } = await run("api", "/rest/api/3/issue/PROJ-1", "--raw");
+    expect(JSON.parse(stdout)).toEqual({ key: "PROJ-1", fields: { description: { type: "doc", version: 1, content: [] } } });
+  });
+
   it("points --body at --data", async () => {
     mockApi([]);
     const { stdout, exitCode } = await run("api", "POST", "/rest/api/3/issue", "--body", "{}");
