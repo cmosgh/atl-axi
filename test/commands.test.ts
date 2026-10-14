@@ -168,16 +168,17 @@ describe("issue edit", () => {
     expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ fields: { customfield_10014: 2 } });
   });
 
-  it("refuses to fill an empty points field when the value lives in one off the edit screen", async () => {
+  // editmeta can omit a field Jira accepts; the holder is written instead of filling the parallel empty field.
+  it("updates the points field that holds the value even when editmeta omits it", async () => {
     const offScreen = { fields: { summary: {}, customfield_10103: {} } };
     const { calls } = mockApi([
       { path: ISSUE, json: issue("PROJ-1", { customfield_10014: 0.5, customfield_10103: null }) },
       { path: `${ISSUE}/editmeta`, json: offScreen },
+      { method: "PUT", path: ISSUE, status: 204 },
     ]);
-    const { stdout, exitCode } = await run("issue", "edit", "PROJ-1", "--points", "0.5");
-    expect(exitCode).toBe(2);
-    expect(stdout).toContain("Story Points (customfield_10014) holds 0.5 on PROJ-1 but is not on its edit screen");
-    expect(calls.some((c) => c.method === "PUT")).toBe(false);
+    expect((await run("issue", "edit", "PROJ-1", "--points", "0.5")).stdout).toContain("(no-op)");
+    await run("issue", "edit", "PROJ-1", "--points", "2");
+    expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ fields: { customfield_10014: 2 } });
   });
 
   it("is a no-op when every value already matches", async () => {

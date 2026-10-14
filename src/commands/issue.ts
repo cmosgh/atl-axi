@@ -38,7 +38,7 @@ flags{transition}:
 notes:
   link relations come from the site's link types, e.g. 'blocks', 'is blocked by', 'relates to', 'duplicates'
   descriptions are Markdown-style: # headings, - and 1. lists (indent to nest), \`\`\` fences, > quotes, \`code\`, **bold**, [text](url). --description-adf takes exact ADF JSON
-  --points writes the points field on the issue's screen; --points-field (or ATL_AXI_POINTS_FIELD) names the field to write instead, skipping the screen check
+  --points updates the points field that already holds a value, else the one on the issue's screen; --points-field (or ATL_AXI_POINTS_FIELD) names the field to write instead, skipping the screen check
 examples[6]:
   atl-axi issue view PROJ-123
   atl-axi issue edit PROJ-123 --points 3 --sprint 578
@@ -375,7 +375,9 @@ async function issueEdit(args: string[]): Promise<string> {
     consider({ id: "description", name: "description" }, description.doc, same, size);
   }
   if (points !== undefined) {
-    const field = forcedPoints ?? pick(pointsFields(catalog), screen, "story points", key, f);
+    // editmeta can omit fields Jira still accepts, so the field already holding the value wins over the screen.
+    const holder = pointsFields(catalog).find((c) => f[c.id] !== null && f[c.id] !== undefined);
+    const field = forcedPoints ?? holder ?? pick(pointsFields(catalog), screen, "story points", key, f);
     consider(field, points, (num(f[field.id]) ?? null) === points, points ?? "none");
   }
   if (sprint !== undefined) {
