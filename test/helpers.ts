@@ -1,7 +1,8 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { vi } from "vitest";
+import { decode } from "@toon-format/toon";
+import { expect, vi } from "vitest";
 import { main } from "../src/cli.js";
 
 export interface Route {
@@ -81,7 +82,20 @@ export async function run(...argv: string[]): Promise<{ stdout: string; exitCode
   await main({ argv, stdout: { write: (chunk: string) => (stdout += chunk) } });
   const exitCode = Number(process.exitCode ?? 0);
   process.exitCode = 0;
+  assertDecodes(argv, stdout);
   return { stdout, exitCode };
+}
+
+/** Every payload is strict TOON, except help pages, fenced free text and `api --raw` JSON; --json is always JSON. */
+function assertDecodes(argv: string[], stdout: string): void {
+  if (argv.includes("--json")) {
+    expect(() => JSON.parse(stdout), stdout).not.toThrow();
+    return;
+  }
+  const helpPage = argv.some((a) => a === "--help" || a === "-h") || ["-v", "-V", "--version"].includes(argv[0] ?? "");
+  const rawJson = argv[0] === "api" && argv.includes("--raw");
+  if (helpPage || rawJson || /^---( |$)/m.test(stdout) || stdout === "") return;
+  expect(() => decode(stdout, { strict: true }), stdout).not.toThrow();
 }
 
 export function issue(key: string, fields: Record<string, unknown> = {}): Record<string, unknown> {

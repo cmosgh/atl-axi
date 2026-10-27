@@ -3,7 +3,8 @@
 AXI-compliant Atlassian Jira Cloud CLI. Read the AXI principles (https://axi.md) before changing output.
 
 - **Output is the product.** Every stdout byte costs tokens. Default list schemas stay at 3-5 fields; extras go behind `--fields`. Keep numbers as numbers (TOON quotes numeric-looking strings). Avoid commas, colons and double quotes inside literal TOON string values.
-- **Handlers return strings** built with `block()` (TOON), `helpBlock()` (one suggestion per line) and `out()` from `src/render.ts`. Free text (descriptions, comments) goes between `---` fences, never inside a TOON string.
+- **Handlers return strings** built with `block()` (TOON), `helpBlock()` (one suggestion per line) and `out()` from `src/render.ts`. Free text (descriptions, comments) goes through `fenced(key, text)`: `---` fences in TOON, the string field `key` under `--json`. Never print raw text any other way.
+- **Output decodes.** Apart from fences (and `api --raw` JSON), stdout is strict TOON with unique top-level keys; `--json` prints the decoded payload. `run()` in `test/helpers.ts` asserts both for every command a test runs.
 - **Every flag is declared.** `parseArgs()` in `src/args.ts` rejects unknown flags with the valid set inline. Validate all input before the first network call; usage errors are `VALIDATION_ERROR` (exit 2).
 - **Mutations are idempotent**: pre-check state, report `(no-op)`, exit 0. Edits send only changed fields. Links are read back after creation (Jira's POST ends are counter-intuitive).
 - **Scoped tokens**: every request goes through `api.atlassian.com/ex/jira/<cloudId>`; a 401 usually means a missing scope, and errors name it (`scopeHint()` in `src/client.ts`). Prefer endpoints that work with `read:jira-work`/`write:jira-work` only (JQL over the Agile API, field edits over sprint endpoints).

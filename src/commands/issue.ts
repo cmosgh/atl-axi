@@ -16,7 +16,7 @@ import {
 } from "../fields.js";
 import { fetchIssue, fields, issueKey, issuePath, jqlString, projectKey, searchJql, statusName, userName } from "../issue-api.js";
 import { currentUser } from "../me.js";
-import { arr, block, dig, helpBlock, num, obj, out, relTime, str, truncate, type Obj } from "../render.js";
+import { arr, block, dig, fenced, helpBlock, isJsonMode, num, obj, out, relTime, str, truncate, type Obj } from "../render.js";
 import { readAdf, readText } from "../text-input.js";
 import { linkCommand, linkRows } from "./link.js";
 
@@ -158,7 +158,7 @@ async function issueView(args: string[]): Promise<string> {
   if (commentTotal > 0) help.push(`Run \`atl-axi issue comments ${key}\` to read ${commentTotal === 1 ? "the comment" : `the ${commentTotal} comments`}`);
   help.push(`Run \`atl-axi issue transition ${key}\` to list status transitions`);
 
-  return out(block({ issue: summary }), description ? "---" : "", description ? text.text : "", description ? "---" : "", helpBlock(help));
+  return out(block({ issue: summary }), description ? fenced("description", text.text) : "", helpBlock(help));
 }
 
 // Shown by `issue view` / `issue comments` or pure bookkeeping.
@@ -213,13 +213,15 @@ async function issueComments(args: string[]): Promise<string> {
 
   const parts: string[] = [block({ issue: key, comments: total === comments.length ? total : `${comments.length} of ${total}` })];
   let truncated = false;
-  for (const c of comments) {
+  const thread = comments.map((c) => {
     const body = adfToText(c["body"]);
     const text = bool(parsed, "--full") ? { text: body, truncated: false } : truncate(body, COMMENT_LIMIT);
     truncated ||= text.truncated;
-    parts.push(`--- ${str(c["id"])} ${userName(c["author"])} ${relTime(c["created"])}`, text.text || "(empty)");
-  }
-  parts.push("---");
+    return { id: str(c["id"]), author: userName(c["author"]), created: relTime(c["created"]), body: text.text };
+  });
+  // `--- <id> <author> <when>` headers are not TOON; --json gets the same thread as rows.
+  if (isJsonMode()) parts.push(block({ thread }));
+  else parts.push(...thread.map((c) => `--- ${c.id} ${c.author} ${c.created}\n${c.body || "(empty)"}`), "---");
   const help: string[] = [];
   if (total > comments.length) help.push(`Run \`atl-axi issue comments ${key} --limit ${Math.min(100, total)}\` for older comments`);
   if (truncated) help.push(`Run \`atl-axi issue comments ${key} --full\` for whole comment bodies`);

@@ -25,8 +25,8 @@ issue:
 Retries transient failures with exponential backoff.
 ---
 help[2]:
-  Run `atl-axi issue comments PROJ-123` to read the 2 comments
-  Run `atl-axi issue transition PROJ-123` to list status transitions
+  - Run `atl-axi issue comments PROJ-123` to read the 2 comments
+  - Run `atl-axi issue transition PROJ-123` to list status transitions
 ```
 
 > **Status: early (v0.1.x).** Covered by unit and mocked end-to-end tests and checked against a live Jira Cloud site.
@@ -105,6 +105,12 @@ Override the stored login (CI, containers, agent shells):
 | `api [METHOD] /rest/...` | Escape hatch; `DELETE` needs `--confirm` |
 
 Every command has `--help`.
+
+Output is strict [TOON](https://toonformat.dev/) apart from free text (descriptions, comments) between `---` fences. For scripts, `--json` anywhere on the line prints the same payload as JSON, with free text as fields (`description`; `thread` rows for `issue comments`); errors keep their exit code:
+
+```sh
+atl-axi search --mine --json | jq -r '.issues[]?.key'
+```
 
 ## Development
 

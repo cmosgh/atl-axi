@@ -1,7 +1,9 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { decode } from "@toon-format/toon";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { helpBlock } from "../src/render.js";
 import { ANA, doc, issue, ME, mockApi, run, useTestEnv } from "./helpers.js";
 
 beforeEach(() => useTestEnv());
@@ -505,5 +507,79 @@ describe("setup hooks", () => {
     const status = await run("setup", "status");
     expect(status.stdout).toContain("claude_code: installed");
     expect(status.stdout).toContain("codex: not installed");
+  });
+});
+
+describe("machine-readable output", () => {
+  const COMMENTS = {
+    total: 1,
+    comments: [{ id: "10001", author: ANA, created: new Date(Date.now() - 3_600_000).toISOString(), body: doc("Fixed: see PR 42, with \"quotes\"") }],
+  };
+  const json = async (...argv: string[]) => {
+    const { stdout, exitCode } = await run(...argv, "--json");
+    return { value: JSON.parse(stdout) as Record<string, any>, exitCode };
+  };
+
+  // run() already asserts strict TOON for each of these; they have no other test.
+  it("commands without their own test still decode as TOON", async () => {
+    mockApi([
+      { path: "/rest/api/3/project/search", json: { values: [{ key: "PROJ", name: "Platform: core, v2" }], total: 1, isLast: true } },
+      { path: "/rest/api/3/search/jql", json: { issues: [issue("PROJ-1", { customfield_10014: 3 })], isLast: true } },
+    ]);
+    for (const argv of [["project", "list"], ["field", "list", "--search", "points"], ["sprint", "issues", "8"], ["auth", "logout"]]) {
+      expect((await run(...argv)).exitCode, argv.join(" ")).toBe(0);
+    }
+  });
+
+  it("--json decodes the same object TOON shows", async () => {
+    mockApi([{ path: "/rest/api/3/search/jql", json: { issues: [issue("PROJ-1")], isLast: true } }]);
+    const toon = await run("search", "--mine");
+    expect((await json("search", "--mine")).value).toEqual(decode(toon.stdout, { strict: true }));
+  });
+
+  it("--json carries fenced free text as string fields", async () => {
+    mockApi([
+      { path: ISSUE, json: issue("PROJ-1", { description: doc("Retries: transient failures."), comment: { total: 1, comments: [] } }) },
+      { path: `${ISSUE}/comment`, json: COMMENTS },
+    ]);
+    const view = (await json("issue", "view", "PROJ-1")).value;
+    expect(view["description"]).toBe("Retries: transient failures.");
+    expect(view["issue"]).toMatchObject({ key: "PROJ-1", comments: 1 });
+    expect((await run("issue", "comments", "PROJ-1")).stdout).toContain("--- 10001 Ana Author 1h ago\nFixed: see PR 42");
+    expect((await json("issue", "comments", "PROJ-1")).value).toMatchObject({
+      issue: "PROJ-1",
+      comments: 1,
+      thread: [{ id: "10001", author: "Ana Author", created: "1h ago", body: 'Fixed: see PR 42, with "quotes"' }],
+    });
+  });
+
+  it("--json with api --raw prints the response itself", async () => {
+    const body = { key: "PROJ-1", fields: { summary: "a: b, c", labels: [] } };
+    mockApi([{ path: ISSUE, json: body }]);
+    expect((await json("api", ISSUE, "--raw")).value).toEqual(body);
+  });
+
+  it("--json keeps errors structured and the exit code", async () => {
+    mockApi([]);
+    const { value, exitCode } = await json("issue", "view", "nope");
+    expect(exitCode).toBe(2);
+    expect(value).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(Array.isArray(value["help"] ?? [])).toBe(true);
+  });
+
+  it("--json works before the command and on the home view", async () => {
+    mockApi([{ path: "/rest/api/3/search/jql", json: { issues: [issue("PROJ-1")], isLast: true } }]);
+    expect((await run("--json", "search", "--mine")).exitCode).toBe(0);
+    delete process.env["ATLASSIAN_API_TOKEN"];
+    const { stdout } = await run("--json");
+    expect(JSON.parse(stdout)).toMatchObject({ jira: "not configured", help: [expect.stringContaining("auth login")] });
+  });
+
+  it("help lines that look like key: value stay strings", async () => {
+    expect(decode(helpBlock(["Run `x` to see: a,b", "42", 'say "hi"']), { strict: true })).toEqual({ help: ["Run `x` to see: a,b", "42", 'say "hi"'] });
+  });
+
+  it("--json wraps help pages that are not TOON", async () => {
+    expect(JSON.parse((await run("--help", "--json")).stdout)["text"]).toContain("usage: atl-axi");
   });
 });

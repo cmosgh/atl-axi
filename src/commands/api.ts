@@ -1,7 +1,8 @@
+import { encode } from "@toon-format/toon";
 import { bool, flag, parseArgs } from "../args.js";
 import { jiraJson } from "../client.js";
 import { usageError } from "../errors.js";
-import { block, helpBlock, out, type Obj } from "../render.js";
+import { block, helpBlock, isJsonMode, out, type Obj } from "../render.js";
 
 export const API_HELP = `usage: atl-axi api [GET|POST|PUT|DELETE] <path> [flags]
 Escape hatch for any Jira Cloud REST endpoint (/rest/api/3/..., /rest/agile/1.0/...), sent through the configured site.
@@ -99,7 +100,8 @@ export async function apiCommand(args: string[]): Promise<string> {
   }
 
   const response = await jiraJson(path, { method, query, body });
-  if (bool(parsed, "--raw")) return JSON.stringify(response);
+  // --raw is already JSON; under --json it must survive the TOON decode in toJson() unchanged.
+  if (bool(parsed, "--raw")) return isJsonMode() ? encode(response) : JSON.stringify(response);
   const stats = { cut: false };
   const shown = bool(parsed, "--full") ? response : shrink(response, stats);
   const payload: Obj =
