@@ -218,25 +218,57 @@ export function positiveId(raw: string | undefined, label: string): number {
   return Number(cleaned);
 }
 
-/** Parse a comma-separated `--fields` value against the supported extras. */
+/**
+ * The option a mistyped word most likely meant: a singular/plural or prefix match, else a close spelling
+ * (1 edit for words of up to 4 letters, so `list` is not taken for `link`, else 2).
+ */
+export function closestOption(input: string, options: readonly string[]): string | undefined {
+  const word = input.toLowerCase();
+  const direct = options.find((o) => o === word.replace(/s$/, "") || (word.length >= 3 && o.startsWith(word)));
+  if (direct) return direct;
+  let best: { option: string; distance: number } | undefined;
+  for (const option of options) {
+    const distance = editDistance(word, option);
+    if (distance <= (word.length <= 4 ? 1 : 2) && (!best || distance < best.distance)) best = { option, distance };
+  }
+  return best?.option;
+}
+
+function editDistance(a: string, b: string): number {
+  let previous = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j++) {
+      current[j] = Math.min(previous[j]! + 1, current[j - 1]! + 1, previous[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    previous = current;
+  }
+  return previous[b.length]!;
+}
+
+/**
+ * Parse a comma-separated `--fields` value against the supported extras. `always` names columns the
+ * view prints anyway: asking for them is accepted and changes nothing.
+ */
 export function parseFields(
   raw: string | undefined,
   available: readonly string[],
+  always: readonly string[] = [],
 ): string[] {
   if (raw === undefined) return [];
   const requested = [
     ...new Set(
       raw
         .split(",")
-        .map((f) => f.trim())
+        .map((f) => f.trim().toLowerCase())
         .filter(Boolean),
     ),
   ];
-  const bad = requested.filter((f) => !available.includes(f));
+  const bad = requested.filter((f) => !available.includes(f) && !always.includes(f));
   if (bad.length > 0) {
     throw usageError(`unknown field${bad.length > 1 ? "s" : ""}: ${bad.join(", ")}`, [
-      `available --fields: ${available.join(", ")}`,
+      `available --fields: ${available.join(", ")}${always.length > 0 ? ` (${always.join(", ")} are always shown)` : ""}`,
     ]);
   }
-  return requested;
+  return requested.filter((f) => !always.includes(f));
 }

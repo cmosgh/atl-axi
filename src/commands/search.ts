@@ -16,6 +16,8 @@ examples[4]:
 `;
 
 const EXTRA_FIELDS = ["type", "priority", "points", "sprint", "parent", "labels", "reporter", "created", "updated"] as const;
+// Columns issueRow() always prints.
+export const BASE_COLUMNS = ["key", "summary", "status", "assignee"] as const;
 
 export function buildJql(base: string | undefined, filters: { project?: string; mine?: boolean; status?: string; sprint?: string; text?: string }): string {
   const clauses: string[] = [];
@@ -89,7 +91,7 @@ export async function searchCommand(args: string[]): Promise<string> {
   if (parsed.positionals.length > 1) throw usageError("pass the JQL as one quoted argument", [`usage: ${command} "<JQL>" [flags]`]);
   const base = parsed.positionals[0] ?? flag(parsed, "--query");
   const limit = intFlag(parsed, "--limit", 20, { min: 1, max: 200 });
-  const extras = parseFields(flag(parsed, "--fields"), EXTRA_FIELDS);
+  const extras = parseFields(flag(parsed, "--fields"), EXTRA_FIELDS, BASE_COLUMNS);
   const sprint = flag(parsed, "--sprint");
   if (sprint !== undefined && sprint !== "open" && !/^\d+$/.test(sprint)) throw usageError(`--sprint expects a sprint id or 'open', got '${sprint}'`);
   const project = flag(parsed, "--project") === undefined ? undefined : projectKey(flag(parsed, "--project"));

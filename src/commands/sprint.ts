@@ -4,7 +4,7 @@ import { usageError } from "../errors.js";
 import { fieldCatalog, pointsFields, sprintFields, sprintRefs, type SprintRef } from "../fields.js";
 import { fields, projectKey, searchJql } from "../issue-api.js";
 import { arr, block, helpBlock, num, obj, out, str } from "../render.js";
-import { issueRow, requestFields } from "./search.js";
+import { BASE_COLUMNS, issueRow, requestFields } from "./search.js";
 
 export const SPRINT_HELP = `usage: atl-axi sprint <list|issues> [args] [flags]
 subcommands[2]:
@@ -79,7 +79,7 @@ async function sprintIssues(args: string[]): Promise<string> {
   const [raw] = expectPositionals(parsed, 1, `${command} <sprint-id> [--limit n] [--fields a,b]`);
   if (!/^\d+$/.test(raw ?? "")) throw usageError(`invalid sprint id '${raw}'`, ["Run `atl-axi sprint list --project <KEY>` for ids"]);
   const limit = intFlag(parsed, "--limit", 50, { min: 1, max: 200 });
-  const extras = parseFields(flag(parsed, "--fields"), ["type", "priority", "points", "parent", "labels", "updated"]);
+  const extras = parseFields(flag(parsed, "--fields"), ["type", "priority", "points", "parent", "labels", "updated"], BASE_COLUMNS);
 
   const catalog = await fieldCatalog();
   const wanted = [...new Set([...requestFields(extras, catalog), ...pointsFields(catalog).map((f) => f.id)])];
