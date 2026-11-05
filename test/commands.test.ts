@@ -76,6 +76,22 @@ describe("search", () => {
     expect((await run("search")).exitCode).toBe(2);
     expect(calls).toHaveLength(0);
   });
+
+  it("accepts the always-shown columns in --fields without repeating them", async () => {
+    mockApi([{ path: "/rest/api/3/search/jql", json: { issues: [issue("PROJ-1")], isLast: true } }]);
+    const { stdout, exitCode } = await run("search", "--project", "PROJ", "--fields", "status,assignee,type");
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("issues[1]{key,summary,status,assignee,type}:");
+  });
+
+  it("names the always-shown columns when a field is unknown", async () => {
+    const { calls } = mockApi([]);
+    const { stdout, exitCode } = await run("search", "--project", "PROJ", "--fields", "status,bogus");
+    expect(exitCode).toBe(2);
+    expect(stdout).toContain("unknown field: bogus");
+    expect(stdout).toContain("(key, summary, status, assignee are always shown)");
+    expect(calls).toHaveLength(0);
+  });
 });
 
 describe("project view", () => {
@@ -279,6 +295,91 @@ describe("issue transition", () => {
     const unknown = await run("issue", "transition", "PROJ-1", "Shipped");
     expect(unknown.exitCode).toBe(2);
     expect(unknown.stdout).toContain("Start work -> In Progress");
+  });
+
+  it("lists transitions under `issue transitions` too", async () => {
+    const { calls } = mockApi([
+      { path: ISSUE, json: issue("PROJ-1") },
+      { path: `${ISSUE}/transitions`, json: transitions },
+    ]);
+    const { stdout, exitCode } = await run("issue", "transitions", "PROJ-1");
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("transitions[2]{id,name,to}:");
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+  });
+
+  it("points `issue transitions <KEY> <target>` at `issue transition` without moving anything", async () => {
+    const { calls } = mockApi([]);
+    const { stdout, exitCode } = await run("issue", "transitions", "PROJ-1", "In Progress");
+    expect(exitCode).toBe(2);
+    expect(stdout).toContain("atl-axi issue transition PROJ-1 'In Progress'");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("issue subcommand typos", () => {
+  it("suggests the closest subcommand with the same arguments", async () => {
+    const { calls } = mockApi([]);
+    const { stdout, exitCode } = await run("issue", "transiton", "PROJ-1", "In Progress");
+    expect(exitCode).toBe(2);
+    expect(stdout).toContain("Did you mean `atl-axi issue transition PROJ-1 'In Progress'`?");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("suggests `transition`, not the list-only `transitions`, when a target is given", async () => {
+    mockApi([]);
+    expect((await run("issue", "transitons", "PROJ-1", "Done")).stdout).toContain("Did you mean `atl-axi issue transition PROJ-1 Done`?");
+    expect((await run("issue", "transitons", "PROJ-1")).stdout).toContain("Did you mean `atl-axi issue transitions PROJ-1`?");
+  });
+
+  it("gives no suggestion when nothing is close", async () => {
+    mockApi([]);
+    const { stdout } = await run("issue", "frobnicate", "PROJ-1");
+    expect(stdout).not.toContain("Did you mean");
+    expect(stdout).toContain("subcommands: view, fields");
+  });
+
+  it("does not take short words for a different short subcommand", async () => {
+    mockApi([]);
+    expect((await run("issue", "list", "--project", "PROJ")).stdout).not.toContain("Did you mean");
+  });
+
+  it("maps common verbs to their subcommand", async () => {
+    mockApi([]);
+    expect((await run("issue", "new", "--project", "PROJ")).stdout).toContain("Did you mean `atl-axi issue create --project PROJ`?");
+    expect((await run("issue", "show", "PROJ-1")).stdout).toContain("Did you mean `atl-axi issue view PROJ-1`?");
+  });
+
+  it("keeps --json and quotes arguments in the rerun", async () => {
+    mockApi([]);
+    const { stdout } = await run("issue", "transitons", "PROJ-1", "It's done", "--json");
+    expect(stdout).toContain(`Did you mean \`atl-axi issue transition PROJ-1 'It'\\\\''s done' --json\`?`);
+  });
+});
+
+describe("issue transitions", () => {
+  it("redirects a move with --resolution to `issue transition`, keeping the flag", async () => {
+    const { calls } = mockApi([]);
+    const { stdout, exitCode } = await run("issue", "transitions", "PROJ-1", "Done", "--resolution", "Won't Do");
+    expect(exitCode).toBe(2);
+    expect(stdout).toContain("atl-axi issue transition PROJ-1 Done --resolution 'Won'\\''t Do'");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("needs a key and rejects --resolution without a target", async () => {
+    const { calls } = mockApi([]);
+    expect((await run("issue", "transitions")).stdout).toContain("usage: atl-axi issue transitions <KEY>");
+    expect((await run("issue", "transitions", "PROJ-1", "--resolution", "Done")).stdout).toContain("--resolution needs a target status");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("sprint issues --fields", () => {
+  it("accepts always-shown columns in any case", async () => {
+    mockApi([{ path: "/rest/api/3/search/jql", json: { issues: [issue("PROJ-1")], isLast: true } }]);
+    const { stdout, exitCode } = await run("sprint", "issues", "8", "--fields", "Status,KEY,type");
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("issues[1]{key,summary,status,assignee,type}:");
   });
 });
 

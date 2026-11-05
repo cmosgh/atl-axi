@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { adfToText, textToAdf } from "../src/adf.js";
+import { closestOption, parseFields } from "../src/args.js";
 import { normalizeSite, scopeHint } from "../src/client.js";
 import { branchIssueKey } from "../src/commands/home.js";
 import { resolveRelation } from "../src/commands/link.js";
@@ -72,6 +73,23 @@ describe("adf", () => {
   it("round-trips plain text through ADF", () => {
     const source = "# Title\n\nline one\nline two\n\n- a\n- b\n\n1. x\n2. y\n\n```\ncode\n```\n\nsee `cfg` at https://example.test";
     expect(adfToText(textToAdf(source))).toBe(source.replace("https://example.test", "https://example.test"));
+  });
+});
+
+describe("closestOption", () => {
+  const options = ["view", "fields", "comments", "comment", "transitions", "transition", "link"];
+  it.each([
+    ["transiton", "transition"],
+    ["Views", "view"],
+    ["trans", "transitions"],
+    ["lnk", "link"],
+  ])("maps %s to %s", (input, expected) => expect(closestOption(input, options)).toBe(expected));
+  it("returns nothing for an unrelated word", () => expect(closestOption("frobnicate", options)).toBeUndefined());
+});
+
+describe("parseFields", () => {
+  it("drops always-shown columns and keeps the order of the rest", () => {
+    expect(parseFields("status, type,assignee,type", ["type", "points"], ["status", "assignee"])).toEqual(["type"]);
   });
 });
 

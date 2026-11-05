@@ -1,5 +1,5 @@
 import { adfToText, textToAdf } from "../adf.js";
-import { bool, expectPositionals, flag, flags, intFlag, parseArgs, type ParsedArgs } from "../args.js";
+import { bool, closestOption, expectPositionals, flag, flags, intFlag, parseArgs, type ParsedArgs } from "../args.js";
 import { jiraJson } from "../client.js";
 import { usageError, axiError } from "../errors.js";
 import {
@@ -21,8 +21,8 @@ import { readAdf, readText } from "../text-input.js";
 import { linkCommand, linkRows } from "./link.js";
 
 export const ISSUE_HELP = `usage: atl-axi issue <subcommand> [args] [flags]
-subcommands[9]:
-  view <KEY>, fields <KEY>, comments <KEY>, comment <KEY>, create, edit <KEY>, transition <KEY> [<status-or-transition>], link <KEY> <relation> <KEY>, unlink <KEY> <relation> <KEY>
+subcommands[10]:
+  view <KEY>, fields <KEY>, comments <KEY>, comment <KEY>, create, edit <KEY>, transitions <KEY>, transition <KEY> [<status-or-transition>], link <KEY> <relation> <KEY>, unlink <KEY> <relation> <KEY>
 flags{view}:
   --full (whole description), --fields <name-or-id,...> (extra fields by name, e.g. 'Fix versions,customfield_10050')
 flags{fields}:
@@ -36,7 +36,7 @@ flags{create}:
 flags{edit}:
   --summary, --description[-file] | --description-adf <path|->, --assignee <me|none|account-id>, --points <n|none>, --points-field <name|id>, --sprint <id|none>, --parent <KEY|none>, --labels <a,b> (replace), --add-label, --remove-label (repeatable), --priority <name>, --set '<field>=<value>' (repeatable), --force (send --set fields that are not on the edit screen)
 flags{transition}:
-  --resolution <name> (when the transition screen asks for one). No target = list available transitions
+  --resolution <name> (when the transition screen asks for one). No target = list available transitions (same as transitions <KEY>)
 notes:
   link relations come from the site's link types, e.g. 'blocks', 'is blocked by', 'relates to', 'duplicates'
   descriptions are Markdown-style: # headings, - and 1. lists (indent to nest), \`\`\` fences, > quotes, \`code\`, **bold**, [text](url). --description-adf takes exact ADF JSON
@@ -50,7 +50,9 @@ examples[6]:
   atl-axi issue create --project PROJ --type Task --summary "Retry the sync worker"
 `;
 
-const SUBCOMMANDS = ["view", "fields", "comments", "comment", "create", "edit", "transition", "link", "unlink"] as const;
+const SUBCOMMANDS = ["view", "fields", "comments", "comment", "create", "edit", "transitions", "transition", "link", "unlink"] as const;
+// Verbs agents reach for that spelling distance would not map.
+const SYNONYMS: Record<string, (typeof SUBCOMMANDS)[number]> = { new: "create", add: "create", show: "view", get: "view", move: "transition" };
 const DESCRIPTION_LIMIT = 2_000;
 const COMMENT_LIMIT = 1_500;
 const BASE_FIELDS = ["summary", "status", "issuetype", "priority", "assignee", "parent", "labels", "updated"];
@@ -70,16 +72,47 @@ export async function issueCommand(args: string[]): Promise<string> {
       return issueCreate(rest);
     case "edit":
       return issueEdit(rest);
+    case "transitions":
+      return issueTransitions(rest);
     case "transition":
       return issueTransition(rest);
     case "link":
     case "unlink":
       return linkCommand(sub!, rest);
   }
+  const closest = sub ? (SYNONYMS[sub.toLowerCase()] ?? closestOption(sub, SUBCOMMANDS)) : undefined;
+  // A target status means the caller wants to move the issue, which only `transition` does.
+  const meant = closest === "transitions" && rest.filter((a) => !a.startsWith("-")).length > 1 ? "transition" : closest;
+  // cli.ts strips --json before dispatch, so it has to be put back for the rerun to match.
+  const rerunArgs = [meant, ...rest.map(shellWord), ...(isJsonMode() ? ["--json"] : [])];
+  const rerun = meant === undefined ? [] : [`Did you mean \`atl-axi issue ${rerunArgs.join(" ")}\`?`];
   throw usageError(sub ? `unknown issue subcommand '${sub}'` : "missing issue subcommand", [
+    ...rerun,
     `subcommands: ${SUBCOMMANDS.join(", ")}`,
     "Run `atl-axi issue --help` for flags",
   ]);
+}
+
+/** Quotes an argument for a copy-pasteable rerun hint. */
+function shellWord(arg: string): string {
+  return /^[\w@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`;
+}
+
+/** `issue transitions <KEY>`: the list half of `issue transition`, under the name agents guess first. */
+async function issueTransitions(args: string[]): Promise<string> {
+  const command = "atl-axi issue transitions";
+  // --resolution is declared only so a move attempt gets redirected with it intact.
+  const parsed = parseArgs(args, [{ name: "--resolution" }], command);
+  const resolution = flag(parsed, "--resolution");
+  if (parsed.positionals.length === 2) {
+    const move = [...parsed.positionals, ...(resolution === undefined ? [] : ["--resolution", resolution])].map(shellWord);
+    throw usageError("transitions only lists them", [`Run \`atl-axi issue transition ${move.join(" ")}\` to move the issue`]);
+  }
+  if (resolution !== undefined) {
+    throw usageError("--resolution needs a target status", [`usage: atl-axi issue transition <KEY> <status-or-transition> --resolution <name>`]);
+  }
+  const [key] = expectPositionals(parsed, 1, `${command} <KEY>`);
+  return issueTransition([key!]);
 }
 
 function pointsValue(issue: Obj, catalog: FieldDef[]): unknown {
