@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { jiraJson } from "../client.js";
 import { readConfig } from "../config.js";
-import { resolveCredentials } from "../credentials.js";
+import { LOGIN_HINT, resolveCredentials } from "../credentials.js";
 import { AxiError } from "../errors.js";
 import { fields, issuePath, searchJql, statusName } from "../issue-api.js";
 import { block, helpBlock, obj, out, relTime, str, type Obj } from "../render.js";
@@ -35,12 +35,12 @@ export function branchIssueKey(cwd: string = process.cwd()): string | undefined 
 }
 
 export async function homeCommand(): Promise<string> {
-  const configured = Boolean(process.env["ATLASSIAN_API_TOKEN"]) || Boolean(readConfig().email);
+  const configured = Boolean(process.env["ATLASSIAN_API_TOKEN"]) || Object.keys(readConfig().profiles ?? {}).length > 0;
   if (!configured) {
     // No keychain or network access until the user has set atl-axi up.
     return out(
       block({ jira: "not configured" }),
-      helpBlock(["Run `<token-command> | atl-axi auth login --site <site>.atlassian.net --email <atlassian-email> --token-stdin`"]),
+      helpBlock([LOGIN_HINT]),
     );
   }
   if (!(await resolveCredentials())) {

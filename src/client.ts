@@ -1,5 +1,5 @@
 import { readConfig, writeConfig } from "./config.js";
-import { authorizationHeader, requireCredentials, type Credentials } from "./credentials.js";
+import { activeProfile, authorizationHeader, LOGIN_HINT, profileFlagValue, requireCredentials, type Credentials } from "./credentials.js";
 import { axiError, AxiError } from "./errors.js";
 import { arr, obj, str } from "./render.js";
 import { VERSION } from "./version.js";
@@ -47,9 +47,11 @@ export async function fetchCloudId(site: string): Promise<string> {
 
 /**
  * Scoped API tokens only work through the api.atlassian.com gateway, so every
- * request goes there. Resolution: JIRA_CLOUD_ID, ATLASSIAN_SITE, then config.
+ * request goes there. Resolution: -p profile, JIRA_CLOUD_ID, ATLASSIAN_SITE, the selected profile, then the cached env site.
  */
 export async function resolveCloudId(): Promise<string> {
+  const flagged = profileFlagValue() ? activeProfile() : undefined;
+  if (flagged?.profile.cloudId) return flagged.profile.cloudId;
   const envId = process.env["JIRA_CLOUD_ID"];
   if (envId) return envId;
   const config = readConfig();
@@ -67,9 +69,11 @@ export async function resolveCloudId(): Promise<string> {
     }
     return cloudId;
   }
+  const selected = activeProfile();
+  if (selected?.profile.cloudId) return selected.profile.cloudId;
   if (config.cloudId) return config.cloudId;
   throw axiError("no Atlassian site configured", "SITE_REQUIRED", [
-    "Run `<token-command> | atl-axi auth login --site <site>.atlassian.net --email <atlassian-email> --token-stdin`",
+    LOGIN_HINT,
     "Or set ATLASSIAN_SITE=<site>.atlassian.net (or JIRA_CLOUD_ID) in the environment",
   ]);
 }

@@ -8,7 +8,8 @@ import { projectCommand, PROJECT_HELP } from "./commands/project.js";
 import { searchCommand, SEARCH_HELP } from "./commands/search.js";
 import { setupCommand, SETUP_HELP } from "./commands/setup.js";
 import { sprintCommand, SPRINT_HELP } from "./commands/sprint.js";
-import { AxiError, exitCodeForError } from "./errors.js";
+import { setProfileFlag } from "./credentials.js";
+import { AxiError, exitCodeForError, usageError } from "./errors.js";
 import { renderErrorOutput, setJsonMode, toJson } from "./render.js";
 import { VERSION } from "./version.js";
 
@@ -18,8 +19,8 @@ export const DESCRIPTION =
 export const TOP_HELP = `usage: atl-axi [command] [args] [flags]
 commands[8]:
   (none)=your open issues, issue, search, sprint, field, project, api, auth, setup
-flags[3]:
-  --json (JSON instead of TOON, for scripts), --help, -v/-V/--version
+flags[4]:
+  -p/--profile <name> (after the command; default: ATL_AXI_PROFILE or the active profile - see auth --help), --json (JSON instead of TOON, for scripts), --help, -v/-V/--version
 examples:
   atl-axi
   atl-axi issue view PROJ-123
@@ -43,7 +44,40 @@ const COMMAND_HELP: Record<string, string> = {
 };
 
 function cmd(name: string, handler: (args: string[]) => Promise<string>): (args: string[]) => Promise<string> {
-  return async (args) => (args.includes("-h") ? (COMMAND_HELP[name] ?? "").trimEnd() : handler(args));
+  return async (args) => {
+    if (args.includes("-h")) return (COMMAND_HELP[name] ?? "").trimEnd();
+    // auth parses --profile itself (login/logout name the profile they change).
+    if (name === "auth") return handler(args);
+    const { profile, rest } = splitProfileFlag(args);
+    setProfileFlag(profile);
+    return handler(rest);
+  };
+}
+
+/** Split `-p/--profile <name>` out of the args so command parsers never see it. */
+export function splitProfileFlag(args: string[]): { profile: string | undefined; rest: string[] } {
+  const rest: string[] = [];
+  let profile: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i]!;
+    if (token === "--") {
+      rest.push(...args.slice(i));
+      break;
+    }
+    if (token === "-p" || token === "--profile") {
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith("-")) throw usageError(`${token} requires a value`, ["-p <profile>"]);
+      profile = value;
+      i++;
+      continue;
+    }
+    if (token.startsWith("--profile=")) {
+      profile = token.slice("--profile=".length);
+      continue;
+    }
+    rest.push(token);
+  }
+  return { profile, rest };
 }
 
 function formatError(error: unknown): { output: string; exitCode: number } {

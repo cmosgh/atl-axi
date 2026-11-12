@@ -9,13 +9,30 @@ export interface CachedUser {
   email: string;
 }
 
+/** One Atlassian account on one site. The token lives in the OS keychain under the profile name. */
+export interface Profile {
+  email: string;
+  /** e.g. acme.atlassian.net */
+  site: string;
+  cloudId: string;
+  user?: CachedUser;
+}
+
 /** Non-secret settings only. Tokens live in the OS keychain, never here. */
 export interface Config {
-  email?: string;
-  /** e.g. acme.atlassian.net */
+  active?: string;
+  profiles?: Record<string, Profile>;
+  /** Caches for the ATLASSIAN_* environment credentials: the ATLASSIAN_SITE cloud id and the user. */
   site?: string;
   cloudId?: string;
   user?: CachedUser;
+}
+
+/** Name a pre-profile login is read as; its token stays under the email in the keychain. */
+export const LEGACY_PROFILE = "default";
+
+export function validProfileName(name: string): boolean {
+  return /^[A-Za-z0-9._-]{1,64}$/.test(name);
 }
 
 export function configDir(): string {
@@ -43,7 +60,15 @@ function writeJson(name: string, value: unknown): void {
 }
 
 export function readConfig(): Config {
-  return readJson<Config>("config.json", {});
+  const raw = readJson<Config & { email?: unknown }>("config.json", {});
+  if (Array.isArray(raw)) return {};
+  // 0.x stored one account at the top level.
+  if (typeof raw.email === "string" && raw.profiles === undefined) {
+    const legacy: Profile = { email: raw.email, site: raw.site ?? "", cloudId: raw.cloudId ?? "", ...(raw.user ? { user: raw.user } : {}) };
+    return { active: LEGACY_PROFILE, profiles: { [LEGACY_PROFILE]: legacy } };
+  }
+  const { email: _email, ...config } = raw;
+  return config;
 }
 
 export function writeConfig(config: Config): void {
