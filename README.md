@@ -69,11 +69,12 @@ atl-axi auth status   # shows which scope families the token has
 
 - The token is read **only from stdin** - never from argv, so it cannot land in shell history or an agent transcript - validated against the API, then stored in the OS keychain (macOS Keychain, Windows Credential Manager, libsecret). `atl-axi` never prompts.
 - Use the **Atlassian account email**.
+- **Profiles** for several accounts or sites: `auth login --profile <name>` stores one token per profile (default profile: `default`) with its site, and makes it active. Pick one with `-p/--profile <name>` after any command, `ATL_AXI_PROFILE` for a single command, or `atl-axi auth use <name>`; `auth logout --profile <name>` removes one. A login from before profiles keeps working as `default`.
 - Requests always go through `api.atlassian.com/ex/jira/<cloudId>` (required for scoped tokens); the cloud id is looked up from the site.
 
 ### Environment variables
 
-Override the stored login (CI, containers, agent shells):
+Override the stored login (CI, containers, agent shells); `-p` on the command line wins over them:
 
 | Variable | Purpose |
 | --- | --- |
@@ -82,6 +83,7 @@ Override the stored login (CI, containers, agent shells):
 | `ATLASSIAN_SITE` | Site, e.g. `acme.atlassian.net`; the cloud id is looked up and cached |
 | `JIRA_CLOUD_ID` | Cloud id directly; skips the lookup and wins over `ATLASSIAN_SITE` |
 | `ATL_AXI_NO_KEYCHAIN` | `1` never reads or writes the OS keychain |
+| `ATL_AXI_PROFILE` | Profile for a single command (default: the active one) |
 | `ATL_AXI_CONFIG_DIR` | Config and cache directory (default `$XDG_CONFIG_HOME/atl-axi` or `~/.config/atl-axi`) |
 | `ATL_AXI_POINTS_FIELD` | Story points field to write (name or id), e.g. `customfield_10014`, when the issue screen offers a different one |
 

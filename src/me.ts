@@ -37,14 +37,20 @@ export async function fetchUser(credentials?: Credentials, cloudId?: string): Pr
 export async function currentUser(): Promise<Me | undefined> {
   const credentials = await resolveCredentials();
   if (!credentials) return undefined;
+  // Cached per profile; environment credentials use the top-level slot.
   const config = readConfig();
-  if (config.user && config.user.email === credentials.email && config.user.accountId) {
-    return { accountId: config.user.accountId, displayName: config.user.displayName };
+  const name = credentials.profile;
+  const known = name ? config.profiles?.[name]?.user : config.user;
+  if (known && known.email === credentials.email && known.accountId) {
+    return { accountId: known.accountId, displayName: known.displayName };
   }
   const me = (await fetchUser()) ?? (await viaJql().catch(() => undefined));
   if (me?.accountId) {
     try {
-      writeConfig({ ...readConfig(), user: { ...me, email: credentials.email } });
+      const fresh = readConfig();
+      const user = { ...me, email: credentials.email };
+      const profile = name ? fresh.profiles?.[name] : undefined;
+      writeConfig(name && profile ? { ...fresh, profiles: { ...fresh.profiles, [name]: { ...profile, user } } } : { ...fresh, user });
     } catch {
       // cache is an optimisation; a read-only config dir must not fail the command
     }
