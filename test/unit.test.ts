@@ -74,6 +74,15 @@ describe("adf", () => {
     const source = "# Title\n\nline one\nline two\n\n- a\n- b\n\n1. x\n2. y\n\n```\ncode\n```\n\nsee `cfg` at https://example.test";
     expect(adfToText(textToAdf(source))).toBe(source.replace("https://example.test", "https://example.test"));
   });
+
+  it("keeps code inside bold free of other marks (ADF allows code with link only)", () => {
+    const para = textToAdf("**Split `data/x` per service.** [see `y`](https://example.test)").content[0]!;
+    const nodes = para["content"] as Array<{ text: string; marks?: Array<{ type: string }> }>;
+    const marks = (text: string) => nodes.find((n) => n.text === text)?.marks?.map((m) => m.type);
+    expect(marks("Split ")).toEqual(["strong"]);
+    expect(marks("data/x")).toEqual(["code"]);
+    expect(marks("y")).toEqual(["code", "link"]);
+  });
 });
 
 describe("closestOption", () => {
