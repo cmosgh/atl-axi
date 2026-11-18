@@ -107,6 +107,14 @@ export function adfToText(doc: unknown): string {
 // Inline tokens: `code`, <url> (smart link), [text](url), **bold**, bare URLs.
 const INLINE_RE = /(`[^`]+`|<https?:\/\/[^\s>]+>|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|\*\*[^*\n]+\*\*|https?:\/\/[^\s)]+)/g;
 
+/** ADF allows marks on text only, and `code` combines with `link` alone: `**a `b` c**` keeps `b` as plain code. */
+function withMark(node: Obj, mark: Obj): Obj {
+  if (node["type"] !== "text") return node;
+  const marks = arr(node["marks"]).map(obj);
+  if (marks.some((m) => m["type"] === "code") && mark["type"] !== "link") return node;
+  return { ...node, marks: [...marks, mark] };
+}
+
 function textNodes(line: string): Obj[] {
   const nodes: Obj[] = [];
   line.split(INLINE_RE).forEach((part, i) => {
@@ -114,11 +122,11 @@ function textNodes(line: string): Obj[] {
     if (i % 2 === 0) nodes.push({ type: "text", text: part });
     else if (part.startsWith("`")) nodes.push({ type: "text", text: part.slice(1, -1), marks: [{ type: "code" }] });
     else if (part.startsWith("<")) nodes.push({ type: "inlineCard", attrs: { url: part.slice(1, -1) } });
-    else if (part.startsWith("**")) nodes.push(...textNodes(part.slice(2, -2)).map((n) => ({ ...n, marks: [...arr(n["marks"]), { type: "strong" }] })));
+    else if (part.startsWith("**")) nodes.push(...textNodes(part.slice(2, -2)).map((n) => withMark(n, { type: "strong" })));
     else if (part.startsWith("[")) {
       const m = part.match(/^\[(.+)\]\((.+)\)$/)!;
       const link = { type: "link", attrs: { href: m[2] } };
-      nodes.push(...textNodes(m[1]!).map((n) => ({ ...n, marks: [...arr(n["marks"]), link] })));
+      nodes.push(...textNodes(m[1]!).map((n) => withMark(n, link)));
     } else nodes.push({ type: "text", text: part, marks: [{ type: "link", attrs: { href: part } }] });
   });
   return nodes;
