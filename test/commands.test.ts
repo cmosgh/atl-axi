@@ -398,6 +398,42 @@ describe("issue comment", () => {
     expect(body.body.content.map((n) => n.type)).toEqual(["paragraph", "bulletList"]);
     expect(stdout).toContain("comment: 101");
   });
+
+  it("edits a comment by id, no-op when unchanged", async () => {
+    const { calls } = mockApi([
+      { path: `${ISSUE}/comment/100`, json: { id: "100", author: ME, body: doc("Old number 3") } },
+      { method: "PUT", path: `${ISSUE}/comment/100`, json: { id: "100" } },
+    ]);
+    expect((await run("issue", "comment", "PROJ-1", "--edit", "100", "--body", "Old number 3")).stdout).toContain("unchanged (no-op)");
+    expect(calls.some((c) => c.method === "PUT")).toBe(false);
+    const { stdout } = await run("issue", "comment", "PROJ-1", "--edit", "100", "--body", "New number 4");
+    expect(stdout).toContain("result: edited");
+    const put = calls.find((c) => c.method === "PUT")!.body as { body: { type: string } };
+    expect(put.body.type).toBe("doc");
+  });
+
+  it("deletes a comment only with --confirm, no-op when gone", async () => {
+    const { calls } = mockApi([
+      { path: `${ISSUE}/comment/100`, json: { id: "100", author: ME, created: new Date().toISOString(), body: doc("Wrong number") } },
+      { method: "DELETE", path: `${ISSUE}/comment/100`, status: 204 },
+      { path: `${ISSUE}/comment/999`, status: 404 },
+    ]);
+    const preview = await run("issue", "comment", "PROJ-1", "--delete", "100");
+    expect(preview.stdout).toContain("NOT deleted - needs --confirm");
+    expect(preview.stdout).toContain("Wrong number");
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+    expect((await run("issue", "comment", "PROJ-1", "--delete", "100", "--confirm")).stdout).toContain("result: deleted");
+    expect(calls.some((c) => c.method === "DELETE")).toBe(true);
+    expect((await run("issue", "comment", "PROJ-1", "--delete", "999", "--confirm")).stdout).toContain("(no-op)");
+  });
+
+  it("rejects bad comment ids and mixed flags before any request", async () => {
+    const { calls } = mockApi([]);
+    expect((await run("issue", "comment", "PROJ-1", "--edit", "abc", "--body", "x")).exitCode).toBe(2);
+    expect((await run("issue", "comment", "PROJ-1", "--delete", "1", "--body", "x")).exitCode).toBe(2);
+    expect((await run("issue", "comment", "PROJ-1", "--body", "x", "--confirm")).exitCode).toBe(2);
+    expect(calls).toHaveLength(0);
+  });
 });
 
 describe("issue link", () => {

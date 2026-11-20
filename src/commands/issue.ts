@@ -30,7 +30,7 @@ flags{fields}:
 flags{comments}:
   --limit <1-100> (default 10, newest last), --full
 flags{comment}:
-  --body <text> | --body-file <path|-> (plain text; blank-line paragraphs, '- ' lists, fenced code)
+  --body <text> | --body-file <path|-> (plain text; blank-line paragraphs, '- ' lists, fenced code), --edit <comment-id> (replace that comment's body), --delete <comment-id> (preview; add --confirm to delete). Ids: the number after --- in \`issue comments\`
 flags{create}:
   --project <KEY> --type <name> --summary <text> (required), --description[-file] | --description-adf <path|->, --parent <KEY>, --points <n>, --points-field <name|id>, --sprint <id>, --labels <a,b>, --assignee <me|account-id>, --set '<field>=<value>' (repeatable), --allow-duplicate (skip the guard against your own same-summary issue from the last day)
 flags{edit}:
@@ -264,11 +264,27 @@ async function issueComments(args: string[]): Promise<string> {
 
 async function issueComment(args: string[]): Promise<string> {
   const command = "atl-axi issue comment";
-  const usage = `${command} <KEY> --body "<text>" | --body-file <path|->`;
-  const parsed = parseArgs(args, [{ name: "--body" }, { name: "--body-file" }], command);
+  const usage = `${command} <KEY> --body "<text>" | --body-file <path|-> [--edit <comment-id>]  |  ${command} <KEY> --delete <comment-id> [--confirm]`;
+  const parsed = parseArgs(
+    args,
+    [{ name: "--body" }, { name: "--body-file" }, { name: "--edit" }, { name: "--delete" }, { name: "--confirm", boolean: true }],
+    command,
+  );
   const [raw] = expectPositionals(parsed, 1, usage);
   const key = issueKey(raw);
+  const editId = commentId(flag(parsed, "--edit"), "--edit", usage);
+  const deleteId = commentId(flag(parsed, "--delete"), "--delete", usage);
+  if (editId && deleteId) throw usageError("--edit and --delete are exclusive", [usage]);
+  if (deleteId) {
+    if (flag(parsed, "--body") !== undefined || flag(parsed, "--body-file") !== undefined) throw usageError("--delete takes no body", [usage]);
+    return commentDelete(key, deleteId, bool(parsed, "--confirm"));
+  }
+  if (bool(parsed, "--confirm")) throw usageError("--confirm applies to --delete only", [usage]);
   const text = readText(parsed, "--body", usage)?.trim();
+  if (editId) {
+    if (!text) throw usageError("comment body is required", [usage]);
+    return commentEdit(key, editId, text);
+  }
   if (!text) throw usageError("comment body is required", [usage]);
 
   // Duplicate guard: an identical recent comment means a retried command.
@@ -281,6 +297,48 @@ async function issueComment(args: string[]): Promise<string> {
 
   const created = obj(await jiraJson(`${issuePath(key)}/comment`, { method: "POST", body: { body: textToAdf(text) } }));
   return out(block({ issue: key, result: "commented", comment: Number(created["id"]) || str(created["id"]) }), helpBlock([`Run \`atl-axi issue comments ${key}\` to read the thread`]));
+}
+
+function commentId(value: string | undefined, name: string, usage: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (!/^\d+$/.test(value.trim())) throw usageError(`${name} takes a numeric comment id (the number after --- in \`atl-axi issue comments\`)`, [usage]);
+  return value.trim();
+}
+
+/** The comment, or undefined on 404 (wrong id, deleted, or on another issue). */
+async function readComment(key: string, id: string): Promise<Record<string, unknown> | undefined> {
+  try {
+    return obj(await jiraJson(`${issuePath(key)}/comment/${id}`));
+  } catch (error) {
+    if ((error as { code?: string }).code === "NOT_FOUND") return undefined;
+    throw error;
+  }
+}
+
+function missingComment(key: string, id: string): never {
+  throw axiError(`comment ${id} not found on ${key}`, "NOT_FOUND", [`Run \`atl-axi issue comments ${key}\` for its comment ids`]);
+}
+
+async function commentEdit(key: string, id: string, text: string): Promise<string> {
+  const current = (await readComment(key, id)) ?? missingComment(key, id);
+  if (adfToText(current["body"]).trim() === text) return block({ issue: key, comment: Number(id), result: "unchanged (no-op)" });
+  await jiraJson(`${issuePath(key)}/comment/${id}`, { method: "PUT", body: { body: textToAdf(text) } });
+  return out(block({ issue: key, comment: Number(id), result: "edited" }), helpBlock([`Run \`atl-axi issue comments ${key}\` to read the thread`]));
+}
+
+async function commentDelete(key: string, id: string, confirm: boolean): Promise<string> {
+  const current = await readComment(key, id);
+  if (!current) return block({ issue: key, comment: Number(id), result: "not found - already deleted or wrong id (no-op)" });
+  if (!confirm) {
+    const body = truncate(adfToText(current["body"]), 200).text;
+    return out(
+      block({ issue: key, comment: Number(id), author: userName(current["author"]), created: relTime(current["created"]), result: "NOT deleted - needs --confirm" }),
+      fenced("body", body),
+      helpBlock([`Run \`atl-axi issue comment ${key} --delete ${id} --confirm\` to delete it`]),
+    );
+  }
+  await jiraJson(`${issuePath(key)}/comment/${id}`, { method: "DELETE" });
+  return block({ issue: key, comment: Number(id), result: "deleted" });
 }
 
 // --- edit / create -------------------------------------------------------------
